@@ -32,6 +32,11 @@ namespace nUnitShouldAdapter
             Assert.AreEqual(expected, actual);
         }
 
+        public static void ShouldNotEqual<T>(this T actual, T notExpected)
+        {
+            Assert.AreNotEqual(actual, notExpected);   
+        }
+
         public static void ShouldBeOfExactType<TExpectedType>(this object objectToCheck)
         {
             Assert.IsInstanceOf<TExpectedType>(objectToCheck);
@@ -53,6 +58,16 @@ namespace nUnitShouldAdapter
         {
             CollectionAssert.Contains(actualEnumerable, expectedObject);
         }
+        public static void ShouldContain<T>(this ICollection<T> actualEnumerable, object expectedObject)
+        {
+            CollectionAssert.Contains(actualEnumerable, expectedObject);
+        }
+
+        public static void ShouldNotContain<T>(this ICollection<T> actualEnumerable, object expectedObject)
+        {
+            CollectionAssert.DoesNotContain(actualEnumerable, expectedObject);
+        }
+
         public static void ShouldContain<T>(this List<T> actualEnumerable, T expectedObject)
         {
             CollectionAssert.Contains(actualEnumerable, expectedObject);
@@ -62,20 +77,16 @@ namespace nUnitShouldAdapter
         {
             Assert.AreSame(expected, actual);
         }
-<<<<<<< HEAD
 
         public static void ShouldBeGreaterThan(this IComparable actual, IComparable greaterThan)
         {
             Assert.Greater(actual, greaterThan);
         } 
-||||||| merged common ancestors
-=======
 
         public static void ShouldContainErrorMessage(this Exception exception, string message)
         {
             Assert.NotNull(exception);
             ShouldContain(exception.Message, message);
         }
->>>>>>> cd065e627bf0c5384a4d34d2cf63675154330594
     }
 }
