@@ -81,8 +81,12 @@ namespace nUnitShouldAdapter
         public static void ShouldBeGreaterThan(this IComparable actual, IComparable greaterThan)
         {
             Assert.Greater(actual, greaterThan);
-        } 
+        }
 
+        public static void ShouldBeGreaterThanOrEqualTo(this IComparable actual, IComparable greaterThanOrEqualTo)
+        {
+            Assert.GreaterOrEqual(actual, greaterThanOrEqualTo);
+        }
         public static void ShouldContainErrorMessage(this Exception exception, string message)
         {
             Assert.NotNull(exception);
