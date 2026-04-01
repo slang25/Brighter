@@ -447,15 +447,13 @@ jobs:
     timeout-minutes: 8
     needs: build
     env:
-      LOCALSTACK_SERVICE_URL: http://localhost.localstack.cloud:4566
+      LOCALSTACK_SERVICE_URL: http://localhost:4566
 
-    services: 
-      localstack: 
-        image: localstack/localstack    
+    services:
+      jet-stack:
+        image: ghcr.io/justeattakeaway/jet-stack:latest
         ports:
           - 4566:4566
-        env: 
-          SERVICES: s3,sqs,sns,sts,dynamodb,iam,scheduler
 
     steps:
       - uses: actions/checkout@v6

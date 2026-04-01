@@ -1,7 +1,6 @@
 ﻿using System;
 using Amazon;
 using Amazon.Runtime;
-using Amazon.S3;
 using Paramore.Brighter.MessagingGateway.AWSSQS;
 using Paramore.Brighter.Transformers.AWS;
 
@@ -37,14 +36,7 @@ public static class GatewayFactory
                 var serviceUrl = Environment.GetEnvironmentVariable("LOCALSTACK_SERVICE_URL");
                 if (!string.IsNullOrWhiteSpace(serviceUrl))
                 {
-                    if (cfg is AmazonS3Config && Uri.TryCreate(serviceUrl, UriKind.Absolute, out var uri))
-                    {
-                        cfg.ServiceURL = $"http://s3.{uri.Authority}";
-                    }
-                    else
-                    {
-                        cfg.ServiceURL = serviceUrl;
-                    }
+                    cfg.ServiceURL = serviceUrl;
                 }
             });
     }
@@ -57,14 +49,7 @@ public static class GatewayFactory
             var serviceUrl = Environment.GetEnvironmentVariable("LOCALSTACK_SERVICE_URL");
             if (!string.IsNullOrWhiteSpace(serviceUrl))
             {
-                if (cfg is AmazonS3Config && Uri.TryCreate(serviceUrl, UriKind.Absolute, out var uri))
-                {
-                    cfg.ServiceURL = $"http://s3.{uri.Authority}";
-                }
-                else
-                {
-                    cfg.ServiceURL = serviceUrl;
-                }
+                cfg.ServiceURL = serviceUrl;
             }
         });
     }
