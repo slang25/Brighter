@@ -24,12 +24,10 @@ jobs:
   autolabel:
     if: github.event_name == 'pull_request'
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: release-drafter/release-drafter@v7
-        with:
-          commitish: master
+      - uses: release-drafter/release-drafter/autolabeler@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
