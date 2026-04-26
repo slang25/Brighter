@@ -336,7 +336,9 @@ namespace Paramore.Brighter.ServiceActivator
                     Log.DispatcherStopped(s_logger);
                 }
             },
-            TaskCreationOptions.LongRunning);
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
             while (State != DispatcherState.DS_RUNNING)
             {
