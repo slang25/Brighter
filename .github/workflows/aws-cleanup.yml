@@ -31,6 +31,24 @@ jobs:
         # 15 seconds provides sufficient margin based on observed propagation times.
         run: sleep 15
 
+      - name: Diagnose - count existing resources
+        run: |
+          echo "=== SNS Topics ==="
+          TOPIC_COUNT=$(aws sns list-topics --query 'Topics | length(@)' --output text)
+          echo "Total topics: $TOPIC_COUNT"
+          echo ""
+          echo "=== FIFO Topics ==="
+          aws sns list-topics --query 'Topics[?ends_with(TopicArn, `.fifo`)].TopicArn' --output text | tr '\t' '\n' | head -50
+          FIFO_COUNT=$(aws sns list-topics --query 'Topics[?ends_with(TopicArn, `.fifo`)] | length(@)' --output text)
+          echo "Total FIFO topics: $FIFO_COUNT"
+          echo ""
+          echo "=== SQS Queues ==="
+          QUEUE_COUNT=$(aws sqs list-queues --query 'QueueUrls | length(@)' --output text 2>/dev/null || echo "0")
+          echo "Total queues: $QUEUE_COUNT"
+          echo ""
+          echo "=== Sample topic names (first 20) ==="
+          aws sns list-topics --query 'Topics[*].TopicArn' --output text | tr '\t' '\n' | sed 's/.*://' | head -20
+
       - name: Cleanup orphaned test resources
         run: |
           chmod +x ./clean_failed_tests_aws_assets.sh
