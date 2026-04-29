@@ -36,6 +36,7 @@ using Paramore.Brighter.JsonConverters;
 using Paramore.Brighter.Logging;
 using Paramore.Brighter.Observability;
 using Paramore.Brighter.Tasks;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
 namespace Paramore.Brighter.MessagingGateway.RMQ.Async;
@@ -49,11 +50,10 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 {
     private readonly InstrumentationOptions _instrumentationOptions;
     private static readonly ILogger s_logger = ApplicationLogging.CreateLogger<RmqMessageProducer>();
-    private static readonly SemaphoreSlim s_lock = new(1, 1);
 
     private RmqPublication _publication;
     private readonly ConcurrentDictionary<ulong, string> _pendingConfirmations = new();
-    private readonly int _waitForConfirmsTimeOutInMilliseconds;
+    private bool _disposed;
 
     /// <summary>
     /// Action taken when a message is published, following receipt of a confirmation from the broker
@@ -103,7 +103,6 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         : base(connection)
     {
         _publication = publication ?? new RmqPublication { MakeChannels = OnMissingChannel.Create };
-        _waitForConfirmsTimeOutInMilliseconds = _publication.WaitForConfirmsTimeOutInMilliseconds;
     }
 
     /// <summary>
@@ -196,9 +195,38 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     public sealed override void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
+        DetachPublisherConfirmHandlers();
+        Channel?.AbortAsync().Wait();
+        Channel?.Dispose();
+        Channel = null;
+
+        GC.SuppressFinalize(this);
+    }
+
+    public sealed override async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        DetachPublisherConfirmHandlers();
+
+        if (Channel is not null)
+        {
+            await Channel.AbortAsync();
+            await Channel.DisposeAsync();
+            Channel = null;
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private void DetachPublisherConfirmHandlers()
+    {
         Channel?.BasicAcksAsync -= OnPublishSucceeded;
         Channel?.BasicNacksAsync -= OnPublishFailed;
-        GC.SuppressFinalize(this);
     }
 
     private Task OnPublishFailed(object sender, BasicNackEventArgs e)
