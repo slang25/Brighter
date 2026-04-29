@@ -210,5 +210,60 @@ else
     echo "  No additional Brighter schedule groups found."
 fi
 
+# --- Fallback: clean up untagged test resources by naming convention ---
+# Some test fixtures (particularly FIFO tests) were not tagged with Environment=Test.
+# These are identified by their naming pattern: <TestPrefix>-<GUID> (truncated to 45 chars).
+# This section lists all topics/queues and deletes those matching known test prefixes.
+TEST_PREFIXES="Producer-Send-Tests|Producer-Requeue-Tests|Producer-DLQ-Tests|Producer-Scheduler-Tests|Producer-Scheduler-Async-Tests|Producer-Fire-Scheduler-Tests|Producer-Fire-Scheduler-Async-Tests|Producer-Tag-Tests|Producer-FSR-Tests|Producer-FSRA-Tests|Consumer-Requeue-Tests|Consumer-DLQ-Tests|Consumer-Fallback-Tests|Consumer-Invalid-Tests|Consumer-NoChan-Tests|Buffered-Consumer-Tests|Buffered-Scheduler-Tests|Buffered-Scheduler-Async-Tests|Buffered-FSR-Tests|Redrive-Tests|Redrive-DLQ-Tests|Raw-Msg-Delivery-Tests"
+
+echo ""
+echo "Scanning for untagged test resources by naming convention ..."
+
+# Clean untagged SNS topics
+ALL_TOPICS=$(aws sns list-topics --query 'Topics[*].TopicArn' --output text 2>&1 || echo "")
+UNTAGGED_TOPIC_COUNT=0
+if [[ -n "$ALL_TOPICS" && "$ALL_TOPICS" != "None" ]]; then
+    for topic_arn in $ALL_TOPICS; do
+        TOPIC_NAME="${topic_arn##*:}"
+        if echo "$TOPIC_NAME" | grep -qE "^($TEST_PREFIXES)"; then
+            UNTAGGED_TOPIC_COUNT=$((UNTAGGED_TOPIC_COUNT + 1))
+            if $DRY_RUN; then
+                echo "  [DRY RUN] Would delete untagged test topic: $TOPIC_NAME"
+            else
+                # Delete subscriptions first
+                TOPIC_SUBS=$(aws sns list-subscriptions-by-topic --topic-arn "$topic_arn" \
+                    --query 'Subscriptions[*].SubscriptionArn' --output text 2>&1 || echo "")
+                for sub_arn in $TOPIC_SUBS; do
+                    [[ "$sub_arn" == "PendingConfirmation" || -z "$sub_arn" || "$sub_arn" == "None" ]] && continue
+                    aws sns unsubscribe --subscription-arn "$sub_arn" 2>&1 || true
+                done
+                echo "  Deleting untagged test topic: $TOPIC_NAME"
+                aws sns delete-topic --topic-arn "$topic_arn" 2>&1 || echo "    WARNING: failed to delete topic $TOPIC_NAME"
+            fi
+        fi
+    done
+fi
+echo "  Found $UNTAGGED_TOPIC_COUNT untagged test topic(s)"
+
+# Clean untagged SQS queues
+ALL_QUEUES=$(aws sqs list-queues --query 'QueueUrls[*]' --output text 2>&1 || echo "")
+UNTAGGED_QUEUE_COUNT=0
+if [[ -n "$ALL_QUEUES" && "$ALL_QUEUES" != "None" ]]; then
+    for queue_url in $ALL_QUEUES; do
+        QUEUE_NAME="${queue_url##*/}"
+        if echo "$QUEUE_NAME" | grep -qE "^($TEST_PREFIXES)"; then
+            UNTAGGED_QUEUE_COUNT=$((UNTAGGED_QUEUE_COUNT + 1))
+            if $DRY_RUN; then
+                echo "  [DRY RUN] Would delete untagged test queue: $QUEUE_NAME"
+            else
+                echo "  Deleting untagged test queue: $QUEUE_NAME"
+                aws sqs delete-queue --queue-url "$queue_url" 2>&1 || echo "    WARNING: failed to delete queue $QUEUE_NAME"
+            fi
+        fi
+    done
+fi
+echo "  Found $UNTAGGED_QUEUE_COUNT untagged test queue(s)"
+
+echo ""
 echo "Cleanup complete."
 exit 0
