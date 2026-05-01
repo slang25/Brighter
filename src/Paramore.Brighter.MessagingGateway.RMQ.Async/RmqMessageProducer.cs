@@ -57,6 +57,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private readonly object _pendingConfirmationsLock = new();
     private readonly int _waitForConfirmsTimeOutInMilliseconds;
     private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedPublisherConfirmationsTask();
+    // Producer disposal has confirmation-specific work; the base guard separately protects channel and pool cleanup.
     private int _disposed;
 
     /// <summary>
@@ -213,6 +214,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
 
         base.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     public sealed override async ValueTask DisposeAsync()
@@ -276,15 +278,17 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
         lock (_pendingConfirmationsLock)
         {
-            foreach (var pendingConfirmation in _pendingConfirmations)
+            var deliveryTagsToRemove = new List<ulong>();
+
+            foreach (var pendingDeliveryTag in _pendingConfirmations.Keys)
             {
-                if (multiple && pendingConfirmation.Key > deliveryTag)
-                    continue;
+                if (multiple ? pendingDeliveryTag <= deliveryTag : pendingDeliveryTag == deliveryTag)
+                    deliveryTagsToRemove.Add(pendingDeliveryTag);
+            }
 
-                if (!multiple && pendingConfirmation.Key != deliveryTag)
-                    continue;
-
-                if (_pendingConfirmations.TryRemove(pendingConfirmation.Key, out var messageId))
+            foreach (var pendingDeliveryTag in deliveryTagsToRemove)
+            {
+                if (_pendingConfirmations.TryRemove(pendingDeliveryTag, out var messageId))
                     messageIds.Add(messageId);
             }
 

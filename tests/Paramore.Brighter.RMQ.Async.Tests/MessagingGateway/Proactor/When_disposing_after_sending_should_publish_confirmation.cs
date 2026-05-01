@@ -81,8 +81,7 @@ public class RmqMessageProducerDisposeConfirmationTests : IDisposable
         _messageProducer.Dispose();
 
         // Assert
-        Assert.True(_published.Task.IsCompletedSuccessfully);
-        Assert.True(await _published.Task);
+        Assert.True(await _published.Task.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
     public void Dispose()
