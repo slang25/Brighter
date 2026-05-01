@@ -227,7 +227,6 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
 
         base.Dispose();
-        GC.SuppressFinalize(this);
     }
 
     public sealed override async ValueTask DisposeAsync()
@@ -300,7 +299,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(() => WaitForPendingPublisherConfirmationsAsync());
 
-    private async Task WaitForPendingPublisherConfirmationsAsync(CancellationToken cancellationToken = default)
+    private async Task WaitForPendingPublisherConfirmationsAsync()
     {
         Task publisherConfirmationsCompleted;
 
@@ -315,14 +314,13 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             publisherConfirmationsCompleted = _publisherConfirmationsCompleted.Task;
         }
 
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var timeoutCancellation = new CancellationTokenSource();
         var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds), timeoutCancellation.Token);
         var completed = await Task.WhenAny(publisherConfirmationsCompleted, timeout);
 
         if (completed == publisherConfirmationsCompleted)
         {
             timeoutCancellation.Cancel();
-            await publisherConfirmationsCompleted;
             return;
         }
 
