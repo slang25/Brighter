@@ -162,8 +162,6 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
                 Channel.BasicNacksAsync += OnPublishFailed;
             }
 
-            var rmqMessagePublisher = new RmqMessagePublisher(Channel, Connection);
-
             message.Persist = Connection.PersistMessages;
             
             BrighterTracer.WriteProducerEvent(Span, MessagingSystem.RabbitMQ, message, _instrumentationOptions);
@@ -171,13 +169,13 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             Log.PublishingMessageAsync(s_logger, Connection.Exchange.Name, Connection.AmpqUri.GetSanitizedUri(), delay.Value.TotalMilliseconds,
                 message.Header.Topic, message.Persist, message.Id, message.Body.Value);
 
-            AddPendingConfirmation(await Channel.GetNextPublishSequenceNumberAsync(cancellationToken), message.Id);
-
-            if (delay == TimeSpan.Zero || DelaySupported || Scheduler == null)
+            if (PublishesOnChannel(delay.Value))
             {
+                var rmqMessagePublisher = new RmqMessagePublisher(Channel, Connection);
+                AddPendingConfirmation(await Channel.GetNextPublishSequenceNumberAsync(cancellationToken), message.Id);
                 await rmqMessagePublisher.PublishMessageAsync(message, delay.Value, cancellationToken);
             }
-            else if(useSchedulerAsync)
+            else if (useSchedulerAsync)
             {
                 var schedulerAsync = (IAmAMessageSchedulerAsync)Scheduler!;
                 await schedulerAsync.ScheduleAsync(message, delay.Value, cancellationToken);
@@ -222,6 +220,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
                 await channel.AbortAsync();
                 await channel.DisposeAsync();
             });
+            // The base dispose still removes the pooled connection; the producer has already disposed the channel.
             Channel = null;
         }
 
@@ -242,6 +241,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         {
             await channel.AbortAsync();
             await channel.DisposeAsync();
+            // The base async dispose still removes the pooled connection; the producer has already disposed the channel.
             Channel = null;
         }
 
@@ -324,7 +324,6 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             return;
         }
 
-        await timeout;
         Log.FailedToAwaitPublisherConfirms(s_logger);
     }
 
@@ -335,9 +334,11 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             if (_pendingConfirmations.Count == 0)
                 _publisherConfirmationsCompleted = PendingTask();
 
-            _pendingConfirmations.TryAdd(deliveryTag, messageId);
+            _pendingConfirmations.Add(deliveryTag, messageId);
         }
     }
+
+    private bool PublishesOnChannel(TimeSpan delay) => delay == TimeSpan.Zero || DelaySupported || Scheduler == null;
 
     private IReadOnlyCollection<string> RemovePendingConfirmations(ulong deliveryTag, bool multiple)
     {

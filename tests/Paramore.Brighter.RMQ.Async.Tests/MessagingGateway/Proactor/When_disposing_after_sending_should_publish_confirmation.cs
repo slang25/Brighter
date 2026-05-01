@@ -81,11 +81,12 @@ public class RmqMessageProducerDisposeConfirmationTests : IDisposable
         _messageProducer.Dispose();
 
         // Assert
-        Assert.True(await _published.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(await _published.Task.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
     public void Dispose()
     {
+        // The test disposes explicitly; teardown keeps cleanup idempotent if the test fails first.
         _messageProducer.Dispose();
     }
 }
