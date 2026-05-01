@@ -142,6 +142,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     
     private async Task SendWithDelayAsync(Message message, TimeSpan? delay, bool useSchedulerAsync, CancellationToken cancellationToken = default)
     {
+        // BeginSend is intentionally outside the try block; if it rejects a disposed producer, CompleteSend must not run.
         BeginSend();
 
         try
@@ -294,7 +295,20 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             activeSendsCompleted = _activeSendsCompleted.Task;
         }
 
-        await activeSendsCompleted;
+        if (_waitForConfirmsTimeOutInMilliseconds == 0)
+            return;
+
+        using var timeoutCancellation = new CancellationTokenSource();
+        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds), timeoutCancellation.Token);
+        var completed = await Task.WhenAny(activeSendsCompleted, timeout);
+
+        if (completed == activeSendsCompleted)
+        {
+            timeoutCancellation.Cancel();
+            return;
+        }
+
+        Log.FailedToAwaitActiveSends(s_logger);
     }
 
     private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(() => WaitForPendingPublisherConfirmationsAsync());
@@ -361,7 +375,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
                     deliveryTagsToRemove.Add(pendingDeliveryTag);
             }
 
-            var messageIds = RemovePendingConfirmations(deliveryTagsToRemove);
+            var messageIds = RemoveConfirmationsLocked(deliveryTagsToRemove);
 
             if (_pendingConfirmations.Count == 0)
                 _publisherConfirmationsCompleted.TrySetResult(true);
@@ -370,7 +384,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
     }
 
-    private List<string> RemovePendingConfirmations(IEnumerable<ulong> deliveryTagsToRemove)
+    private List<string> RemoveConfirmationsLocked(IEnumerable<ulong> deliveryTagsToRemove)
     {
         var messageIds = new List<string>();
 
@@ -443,6 +457,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
         [LoggerMessage(LogLevel.Warning, "Failed to await publisher confirms when shutting down")]
         public static partial void FailedToAwaitPublisherConfirms(ILogger logger);
+
+        [LoggerMessage(LogLevel.Warning, "Failed to await active sends when shutting down")]
+        public static partial void FailedToAwaitActiveSends(ILogger logger);
 
         [LoggerMessage(LogLevel.Information, "Published message: {MessageId}")]
         public static partial void PublishedMessage(ILogger logger, string messageId);

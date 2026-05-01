@@ -31,10 +31,13 @@ using Xunit;
 namespace Paramore.Brighter.RMQ.Async.Tests.MessagingGateway.Proactor;
 
 [Trait("Category", "RMQ")]
-public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsyncDisposable
+public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsyncLifetime, IAsyncDisposable
 {
     private readonly Message _message;
     private readonly RmqMessageProducer _messageProducer;
+    private readonly RmqMessagingGatewayConnection _rmqConnection;
+    private readonly ChannelName _channelName;
+    private readonly RoutingKeys _routingKeys;
     private readonly TaskCompletionSource<bool> _published = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public RmqMessageProducerDisposeAsyncConfirmationTests()
@@ -45,14 +48,16 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsy
             new MessageHeader(Guid.NewGuid().ToString(), routingKey, MessageType.MT_COMMAND),
             new MessageBody("test content"));
 
-        var rmqConnection = new RmqMessagingGatewayConnection
+        _rmqConnection = new RmqMessagingGatewayConnection
         {
             AmpqUri = new AmqpUriSpecification(new Uri("amqp://guest:guest@localhost:5672/%2f")),
             Exchange = new Exchange("paramore.brighter.exchange")
         };
+        _channelName = new ChannelName(Guid.NewGuid().ToString());
+        _routingKeys = new RoutingKeys(routingKey);
 
         _messageProducer = new RmqMessageProducer(
-            rmqConnection,
+            _rmqConnection,
             new RmqPublication
             {
                 MakeChannels = OnMissingChannel.Create,
@@ -64,17 +69,12 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsy
             if (messageId == _message.Id)
                 _published.TrySetResult(success);
         };
-
-        new QueueFactory(rmqConnection, new ChannelName(Guid.NewGuid().ToString()), new RoutingKeys(routingKey))
-            .CreateAsync()
-            .GetAwaiter()
-            .GetResult();
     }
 
     [Fact]
     public async Task When_disposing_async_after_sending_should_publish_confirmation()
     {
-        // Arrange handled by the constructor.
+        // Arrange handled by fixture setup.
 
         // Act
         await _messageProducer.SendAsync(_message);
@@ -96,4 +96,11 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsy
         // The test disposes explicitly; teardown keeps cleanup idempotent if the test fails first.
         await _messageProducer.DisposeAsync();
     }
+
+    public async Task InitializeAsync()
+    {
+        await new QueueFactory(_rmqConnection, _channelName, _routingKeys).CreateAsync();
+    }
+
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 }
