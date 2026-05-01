@@ -31,7 +31,7 @@ using Xunit;
 namespace Paramore.Brighter.RMQ.Async.Tests.MessagingGateway.Proactor;
 
 [Trait("Category", "RMQ")]
-public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsyncLifetime, IAsyncDisposable
+public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsyncLifetime
 {
     private readonly Message _message;
     private readonly RmqMessageProducer _messageProducer;
@@ -91,16 +91,14 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsy
         _messageProducer.Dispose();
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        // The test disposes explicitly; teardown keeps cleanup idempotent if the test fails first.
-        await _messageProducer.DisposeAsync();
-    }
-
     public async Task InitializeAsync()
     {
         await new QueueFactory(_rmqConnection, _channelName, _routingKeys).CreateAsync();
     }
 
-    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
+    public async Task DisposeAsync()
+    {
+        // The test disposes explicitly; teardown keeps cleanup idempotent if the test fails first.
+        await _messageProducer.DisposeAsync();
+    }
 }

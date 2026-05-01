@@ -150,6 +150,10 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         // BeginSend is intentionally outside the try block; if it rejects a disposed producer, CompleteSend must not run.
         BeginSend();
 
+        // Tracks the publish sequence we have registered for confirmation. Cleared once the publish succeeds
+        // (broker takes ownership of the ack) or once we have explicitly removed the orphan in the catch path.
+        ulong? pendingDeliveryTag = null;
+
         try
         {
             if (Connection.Exchange is null) throw new ConfigurationException("RmqMessageProducer: Exchange is not set");
@@ -158,10 +162,10 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             delay ??= TimeSpan.Zero;
 
             Log.PreparingToSendAsync(s_logger, Connection.Exchange.Name);
-            
-            var channelInitialized = Channel is not null;   
+
+            var channelInitialized = Channel is not null;
             await EnsureBrokerAsync(makeExchange: _publication.MakeChannels, cancellationToken: cancellationToken);
-            
+
             if (Channel is null) throw new ChannelFailureException($"RmqMessageProducer: Channel is not set for {_publication.Topic}");
             if (!channelInitialized)
             {
@@ -170,7 +174,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             }
 
             message.Persist = Connection.PersistMessages;
-            
+
             BrighterTracer.WriteProducerEvent(Span, MessagingSystem.RabbitMQ, message, _instrumentationOptions);
 
             Log.PublishingMessageAsync(s_logger, Connection.Exchange.Name, Connection.AmpqUri.GetSanitizedUri(), delay.Value.TotalMilliseconds,
@@ -179,8 +183,12 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             if (PublishesOnChannel(delay.Value))
             {
                 var rmqMessagePublisher = new RmqMessagePublisher(Channel, Connection);
-                AddPendingConfirmation(await Channel.GetNextPublishSequenceNumberAsync(cancellationToken), message.Id);
+                var deliveryTag = await Channel.GetNextPublishSequenceNumberAsync(cancellationToken);
+                AddPendingConfirmation(deliveryTag, message.Id);
+                pendingDeliveryTag = deliveryTag;
                 await rmqMessagePublisher.PublishMessageAsync(message, delay.Value, cancellationToken);
+                // Publish succeeded; the broker now owns the confirmation and will ack/nack via the handler.
+                pendingDeliveryTag = null;
             }
             else if (useSchedulerAsync)
             {
@@ -201,6 +209,8 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         {
             Log.ErrorTalkingToSocketAsync(s_logger, io, Connection.AmpqUri!.GetSanitizedUri());
             ClearPendingConfirmations();
+            // ClearPendingConfirmations removed the orphan; suppress the per-tag cleanup in finally.
+            pendingDeliveryTag = null;
             // Capture the failed channel before reset; otherwise the detach fires on the recovered channel
             // and the next send loses confirm tracking.
             var failedChannel = Channel;
@@ -214,6 +224,12 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
         finally
         {
+            // Non-IOException failures (broker timeouts, OperationInterruptedException, cancellation) leave
+            // the registered tag in flight without a corresponding broker ack — remove it so disposal does
+            // not block waiting on a confirmation that will never arrive.
+            if (pendingDeliveryTag.HasValue)
+                RemovePendingConfirmations(pendingDeliveryTag.Value, multiple: false);
+
             CompleteSend();
         }
     }
@@ -325,7 +341,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         Log.FailedToAwaitActiveSends(s_logger);
     }
 
-    private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(() => WaitForPendingPublisherConfirmationsAsync());
+    private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(WaitForPendingPublisherConfirmationsAsync);
 
     private async Task WaitForPendingPublisherConfirmationsAsync()
     {
