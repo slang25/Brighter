@@ -53,7 +53,8 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private RmqPublication _publication;
     private readonly ConcurrentDictionary<ulong, string> _pendingConfirmations = new();
-    private bool _disposed;
+    private readonly int _waitForConfirmsTimeOutInMilliseconds;
+    private int _disposed;
 
     /// <summary>
     /// Action taken when a message is published, following receipt of a confirmation from the broker
@@ -103,6 +104,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         : base(connection)
     {
         _publication = publication ?? new RmqPublication { MakeChannels = OnMissingChannel.Create };
+        _waitForConfirmsTimeOutInMilliseconds = _publication.WaitForConfirmsTimeOutInMilliseconds;
     }
 
     /// <summary>
@@ -195,22 +197,23 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     public sealed override void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
+        WaitForPendingPublisherConfirmations();
         DetachPublisherConfirmHandlers();
         Channel?.AbortAsync().Wait();
         Channel?.Dispose();
         Channel = null;
 
+        // Producer-owned channel disposal only. Connection pool lifetime is tracked separately in #4102.
         GC.SuppressFinalize(this);
     }
 
     public sealed override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
+        await WaitForPendingPublisherConfirmationsAsync();
         DetachPublisherConfirmHandlers();
 
         if (Channel is not null)
@@ -220,7 +223,30 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             Channel = null;
         }
 
+        // Producer-owned channel disposal only. Connection pool lifetime is tracked separately in #4102.
         GC.SuppressFinalize(this);
+    }
+
+    private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(WaitForPendingPublisherConfirmationsAsync);
+
+    private async Task WaitForPendingPublisherConfirmationsAsync()
+    {
+        if (Channel is not { IsOpen: true } || _pendingConfirmations.IsEmpty)
+            return;
+
+        using var timeout = new CancellationTokenSource(_waitForConfirmsTimeOutInMilliseconds);
+
+        try
+        {
+            while (!_pendingConfirmations.IsEmpty)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.FailedToAwaitPublisherConfirms(s_logger);
+        }
     }
 
     private void DetachPublisherConfirmHandlers()
@@ -269,6 +295,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         
         [LoggerMessage(LogLevel.Debug, "Failed to publish message: {MessageId}")]
         public static partial void FailedToPublishMessageAsync(ILogger logger, string messageId);
+
+        [LoggerMessage(LogLevel.Warning, "Failed to await publisher confirms when shutting down!")]
+        public static partial void FailedToAwaitPublisherConfirms(ILogger logger);
 
         [LoggerMessage(LogLevel.Information, "Published message: {MessageId}")]
         public static partial void PublishedMessage(ILogger logger, string messageId);
