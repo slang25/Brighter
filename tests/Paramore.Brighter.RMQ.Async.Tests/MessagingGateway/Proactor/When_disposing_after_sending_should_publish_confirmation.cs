@@ -31,13 +31,13 @@ using Xunit;
 namespace Paramore.Brighter.RMQ.Async.Tests.MessagingGateway.Proactor;
 
 [Trait("Category", "RMQ")]
-public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable
+public class RmqMessageProducerDisposeConfirmationTests : IDisposable
 {
     private readonly Message _message;
     private readonly RmqMessageProducer _messageProducer;
     private readonly TaskCompletionSource<bool> _published = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public RmqMessageProducerDisposeAsyncConfirmationTests()
+    public RmqMessageProducerDisposeConfirmationTests()
     {
         var routingKey = new RoutingKey(Guid.NewGuid().ToString());
 
@@ -72,13 +72,13 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable
     }
 
     [Fact]
-    public async Task When_disposing_async_after_sending_should_publish_confirmation()
+    public async Task When_disposing_after_sending_should_publish_confirmation()
     {
         // Arrange handled by the constructor.
 
         // Act
-        await _messageProducer.SendAsync(_message);
-        await _messageProducer.DisposeAsync();
+        _messageProducer.Send(_message);
+        _messageProducer.Dispose();
 
         // Assert
         Assert.True(_published.Task.IsCompletedSuccessfully);

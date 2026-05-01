@@ -26,6 +26,7 @@ THE SOFTWARE. */
 #nullable enable
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -53,7 +54,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private RmqPublication _publication;
     private readonly ConcurrentDictionary<ulong, string> _pendingConfirmations = new();
+    private readonly object _pendingConfirmationsLock = new();
     private readonly int _waitForConfirmsTimeOutInMilliseconds;
+    private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedPublisherConfirmationsTask();
     private int _disposed;
 
     /// <summary>
@@ -164,7 +167,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             Log.PublishingMessageAsync(s_logger, Connection.Exchange.Name, Connection.AmpqUri.GetSanitizedUri(), delay.Value.TotalMilliseconds,
                 message.Header.Topic, message.Persist, message.Id, message.Body.Value);
 
-            _pendingConfirmations.TryAdd(await Channel.GetNextPublishSequenceNumberAsync(cancellationToken), message.Id);
+            AddPendingConfirmation(await Channel.GetNextPublishSequenceNumberAsync(cancellationToken), message.Id);
 
             if (delay == TimeSpan.Zero || DelaySupported || Scheduler == null)
             {
@@ -201,12 +204,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
         WaitForPendingPublisherConfirmations();
         DetachPublisherConfirmHandlers();
-        Channel?.AbortAsync().Wait();
-        Channel?.Dispose();
-        Channel = null;
 
-        // Producer-owned channel disposal only. Connection pool lifetime is tracked separately in #4102.
-        GC.SuppressFinalize(this);
+        if (Channel is not null)
+        {
+            BrighterAsyncContext.Run(() => Channel.AbortAsync());
+            Channel.Dispose();
+            Channel = null;
+        }
+
+        base.Dispose();
     }
 
     public sealed override async ValueTask DisposeAsync()
@@ -223,7 +229,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             Channel = null;
         }
 
-        // Producer-owned channel disposal only. Connection pool lifetime is tracked separately in #4102.
+        await base.DisposeAsync();
         GC.SuppressFinalize(this);
     }
 
@@ -231,23 +237,73 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private async Task WaitForPendingPublisherConfirmationsAsync()
     {
-        if (Channel is not { IsOpen: true } || _pendingConfirmations.IsEmpty)
-            return;
+        Task publisherConfirmationsCompleted;
 
-        using var timeout = new CancellationTokenSource(_waitForConfirmsTimeOutInMilliseconds);
-
-        try
+        lock (_pendingConfirmationsLock)
         {
-            while (!_pendingConfirmations.IsEmpty)
-            {
-                await Task.Delay(10, timeout.Token);
-            }
+            if (Channel is not { IsOpen: true } || _pendingConfirmations.IsEmpty)
+                return;
+
+            publisherConfirmationsCompleted = _publisherConfirmationsCompleted.Task;
         }
-        catch (OperationCanceledException)
+
+        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds));
+        var completed = await Task.WhenAny(publisherConfirmationsCompleted, timeout);
+
+        if (completed == publisherConfirmationsCompleted)
         {
-            Log.FailedToAwaitPublisherConfirms(s_logger);
+            await publisherConfirmationsCompleted;
+            return;
+        }
+
+        Log.FailedToAwaitPublisherConfirms(s_logger);
+    }
+
+    private void AddPendingConfirmation(ulong deliveryTag, string messageId)
+    {
+        lock (_pendingConfirmationsLock)
+        {
+            if (_pendingConfirmations.IsEmpty)
+                _publisherConfirmationsCompleted = PendingPublisherConfirmationsTask();
+
+            _pendingConfirmations.TryAdd(deliveryTag, messageId);
         }
     }
+
+    private IReadOnlyCollection<string> RemovePendingConfirmations(ulong deliveryTag, bool multiple)
+    {
+        var messageIds = new List<string>();
+
+        lock (_pendingConfirmationsLock)
+        {
+            foreach (var pendingConfirmation in _pendingConfirmations)
+            {
+                if (multiple && pendingConfirmation.Key > deliveryTag)
+                    continue;
+
+                if (!multiple && pendingConfirmation.Key != deliveryTag)
+                    continue;
+
+                if (_pendingConfirmations.TryRemove(pendingConfirmation.Key, out var messageId))
+                    messageIds.Add(messageId);
+            }
+
+            if (_pendingConfirmations.IsEmpty)
+                _publisherConfirmationsCompleted.TrySetResult(true);
+        }
+
+        return messageIds;
+    }
+
+    private static TaskCompletionSource<bool> CompletedPublisherConfirmationsTask()
+    {
+        var publisherConfirmationsCompleted = PendingPublisherConfirmationsTask();
+        publisherConfirmationsCompleted.SetResult(true);
+        return publisherConfirmationsCompleted;
+    }
+
+    private static TaskCompletionSource<bool> PendingPublisherConfirmationsTask()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private void DetachPublisherConfirmHandlers()
     {
@@ -257,10 +313,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private Task OnPublishFailed(object sender, BasicNackEventArgs e)
     {
-        if (_pendingConfirmations.TryGetValue(e.DeliveryTag, out var messageId))
+        foreach (var messageId in RemovePendingConfirmations(e.DeliveryTag, e.Multiple))
         {
             OnMessagePublished?.Invoke(false, messageId);
-            _pendingConfirmations.TryRemove(e.DeliveryTag, out _);
             Log.FailedToPublishMessageAsync(s_logger, messageId);
         }
 
@@ -269,10 +324,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private Task OnPublishSucceeded(object sender, BasicAckEventArgs e)
     {
-        if (_pendingConfirmations.TryGetValue(e.DeliveryTag, out var messageId))
+        foreach (var messageId in RemovePendingConfirmations(e.DeliveryTag, e.Multiple))
         {
             OnMessagePublished?.Invoke(true, messageId);
-            _pendingConfirmations.TryRemove(e.DeliveryTag, out _);
             Log.PublishedMessage(s_logger, messageId);
         }
 
@@ -296,7 +350,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         [LoggerMessage(LogLevel.Debug, "Failed to publish message: {MessageId}")]
         public static partial void FailedToPublishMessageAsync(ILogger logger, string messageId);
 
-        [LoggerMessage(LogLevel.Warning, "Failed to await publisher confirms when shutting down!")]
+        [LoggerMessage(LogLevel.Warning, "Failed to await publisher confirms when shutting down")]
         public static partial void FailedToAwaitPublisherConfirms(ILogger logger);
 
         [LoggerMessage(LogLevel.Information, "Published message: {MessageId}")]
