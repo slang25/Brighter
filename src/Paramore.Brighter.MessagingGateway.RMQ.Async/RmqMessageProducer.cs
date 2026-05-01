@@ -25,7 +25,6 @@ THE SOFTWARE. */
 
 #nullable enable
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -53,11 +52,13 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private static readonly ILogger s_logger = ApplicationLogging.CreateLogger<RmqMessageProducer>();
 
     private RmqPublication _publication;
-    private readonly ConcurrentDictionary<ulong, string> _pendingConfirmations = new();
-    private readonly object _pendingConfirmationsLock = new();
+    private readonly Dictionary<ulong, string> _pendingConfirmations = new();
+    private readonly object _stateLock = new();
     private readonly int _waitForConfirmsTimeOutInMilliseconds;
-    private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedPublisherConfirmationsTask();
+    private TaskCompletionSource<bool> _activeSendsCompleted = CompletedTask();
+    private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedTask();
     // Producer disposal has confirmation-specific work; the base guard separately protects channel and pool cleanup.
+    private int _activeSends;
     private int _disposed;
 
     /// <summary>
@@ -140,13 +141,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     
     private async Task SendWithDelayAsync(Message message, TimeSpan? delay, bool useSchedulerAsync, CancellationToken cancellationToken = default)
     {
-        if (Connection.Exchange is null) throw new ConfigurationException("RmqMessageProducer: Exchange is not set");
-        if (Connection.AmpqUri is null) throw new ConfigurationException("RmqMessageProducer: Broker URL is not set");
-        
-        delay ??= TimeSpan.Zero;
+        BeginSend();
 
         try
         {
+            if (Connection.Exchange is null) throw new ConfigurationException("RmqMessageProducer: Exchange is not set");
+            if (Connection.AmpqUri is null) throw new ConfigurationException("RmqMessageProducer: Broker URL is not set");
+
+            delay ??= TimeSpan.Zero;
+
             Log.PreparingToSendAsync(s_logger, Connection.Exchange.Name);
             
             var channelInitialized = Channel is not null;   
@@ -191,11 +194,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
         catch (IOException io)
         {
-            Log.ErrorTalkingToSocketAsync(s_logger, io, Connection.AmpqUri.GetSanitizedUri());
+            Log.ErrorTalkingToSocketAsync(s_logger, io, Connection.AmpqUri!.GetSanitizedUri());
             await ResetConnectionToBrokerAsync(cancellationToken);
             Channel?.BasicAcksAsync -= OnPublishSucceeded;
             Channel?.BasicNacksAsync -= OnPublishFailed;
             throw new ChannelFailureException("Error talking to the broker, see inner exception for details", io);
+        }
+        finally
+        {
+            CompleteSend();
         }
     }
 
@@ -203,13 +210,18 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
+        WaitForActiveSends();
         WaitForPendingPublisherConfirmations();
         DetachPublisherConfirmHandlers();
 
-        if (Channel is not null)
+        var channel = Channel;
+        if (channel is not null)
         {
-            BrighterAsyncContext.Run(() => Channel.AbortAsync());
-            Channel.Dispose();
+            BrighterAsyncContext.Run(async () =>
+            {
+                await channel.AbortAsync();
+                await channel.DisposeAsync();
+            });
             Channel = null;
         }
 
@@ -221,13 +233,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
+        await WaitForActiveSendsAsync();
         await WaitForPendingPublisherConfirmationsAsync();
         DetachPublisherConfirmHandlers();
 
-        if (Channel is not null)
+        var channel = Channel;
+        if (channel is not null)
         {
-            await Channel.AbortAsync();
-            await Channel.DisposeAsync();
+            await channel.AbortAsync();
+            await channel.DisposeAsync();
             Channel = null;
         }
 
@@ -235,38 +249,91 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         GC.SuppressFinalize(this);
     }
 
-    private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(WaitForPendingPublisherConfirmationsAsync);
+    private void BeginSend()
+    {
+        lock (_stateLock)
+        {
+            ThrowIfDisposed();
 
-    private async Task WaitForPendingPublisherConfirmationsAsync()
+            if (_activeSends == 0)
+                _activeSendsCompleted = PendingTask();
+
+            _activeSends++;
+        }
+    }
+
+    private void CompleteSend()
+    {
+        lock (_stateLock)
+        {
+            _activeSends--;
+
+            if (_activeSends == 0)
+                _activeSendsCompleted.TrySetResult(true);
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(RmqMessageProducer));
+    }
+
+    private void WaitForActiveSends() => BrighterAsyncContext.Run(WaitForActiveSendsAsync);
+
+    private async Task WaitForActiveSendsAsync()
+    {
+        Task activeSendsCompleted;
+
+        lock (_stateLock)
+        {
+            if (_activeSends == 0)
+                return;
+
+            activeSendsCompleted = _activeSendsCompleted.Task;
+        }
+
+        await activeSendsCompleted;
+    }
+
+    private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(() => WaitForPendingPublisherConfirmationsAsync());
+
+    private async Task WaitForPendingPublisherConfirmationsAsync(CancellationToken cancellationToken = default)
     {
         Task publisherConfirmationsCompleted;
 
-        lock (_pendingConfirmationsLock)
+        lock (_stateLock)
         {
-            if (Channel is not { IsOpen: true } || _pendingConfirmations.IsEmpty)
+            if (Channel is not { IsOpen: true } || _pendingConfirmations.Count == 0)
+                return;
+
+            if (_waitForConfirmsTimeOutInMilliseconds == 0)
                 return;
 
             publisherConfirmationsCompleted = _publisherConfirmationsCompleted.Task;
         }
 
-        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds));
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds), timeoutCancellation.Token);
         var completed = await Task.WhenAny(publisherConfirmationsCompleted, timeout);
 
         if (completed == publisherConfirmationsCompleted)
         {
+            timeoutCancellation.Cancel();
             await publisherConfirmationsCompleted;
             return;
         }
 
+        await timeout;
         Log.FailedToAwaitPublisherConfirms(s_logger);
     }
 
     private void AddPendingConfirmation(ulong deliveryTag, string messageId)
     {
-        lock (_pendingConfirmationsLock)
+        lock (_stateLock)
         {
-            if (_pendingConfirmations.IsEmpty)
-                _publisherConfirmationsCompleted = PendingPublisherConfirmationsTask();
+            if (_pendingConfirmations.Count == 0)
+                _publisherConfirmationsCompleted = PendingTask();
 
             _pendingConfirmations.TryAdd(deliveryTag, messageId);
         }
@@ -274,39 +341,49 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
     private IReadOnlyCollection<string> RemovePendingConfirmations(ulong deliveryTag, bool multiple)
     {
-        var messageIds = new List<string>();
-
-        lock (_pendingConfirmationsLock)
+        lock (_stateLock)
         {
             var deliveryTagsToRemove = new List<ulong>();
 
             foreach (var pendingDeliveryTag in _pendingConfirmations.Keys)
             {
-                if (multiple ? pendingDeliveryTag <= deliveryTag : pendingDeliveryTag == deliveryTag)
+                if (IsConfirmedBy(pendingDeliveryTag, deliveryTag, multiple))
                     deliveryTagsToRemove.Add(pendingDeliveryTag);
             }
 
-            foreach (var pendingDeliveryTag in deliveryTagsToRemove)
-            {
-                if (_pendingConfirmations.TryRemove(pendingDeliveryTag, out var messageId))
-                    messageIds.Add(messageId);
-            }
+            var messageIds = RemovePendingConfirmations(deliveryTagsToRemove);
 
-            if (_pendingConfirmations.IsEmpty)
+            if (_pendingConfirmations.Count == 0)
                 _publisherConfirmationsCompleted.TrySetResult(true);
+
+            return messageIds;
+        }
+    }
+
+    private List<string> RemovePendingConfirmations(IEnumerable<ulong> deliveryTagsToRemove)
+    {
+        var messageIds = new List<string>();
+
+        foreach (var pendingDeliveryTag in deliveryTagsToRemove)
+        {
+            if (_pendingConfirmations.Remove(pendingDeliveryTag, out var messageId))
+                messageIds.Add(messageId);
         }
 
         return messageIds;
     }
 
-    private static TaskCompletionSource<bool> CompletedPublisherConfirmationsTask()
+    private static bool IsConfirmedBy(ulong pendingDeliveryTag, ulong deliveryTag, bool multiple)
+        => multiple ? pendingDeliveryTag <= deliveryTag : pendingDeliveryTag == deliveryTag;
+
+    private static TaskCompletionSource<bool> CompletedTask()
     {
-        var publisherConfirmationsCompleted = PendingPublisherConfirmationsTask();
-        publisherConfirmationsCompleted.SetResult(true);
-        return publisherConfirmationsCompleted;
+        var taskCompletionSource = PendingTask();
+        taskCompletionSource.SetResult(true);
+        return taskCompletionSource;
     }
 
-    private static TaskCompletionSource<bool> PendingPublisherConfirmationsTask()
+    private static TaskCompletionSource<bool> PendingTask()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private void DetachPublisherConfirmHandlers()
