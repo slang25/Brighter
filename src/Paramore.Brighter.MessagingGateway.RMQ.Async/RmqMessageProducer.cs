@@ -51,6 +51,11 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private readonly InstrumentationOptions _instrumentationOptions;
     private static readonly ILogger s_logger = ApplicationLogging.CreateLogger<RmqMessageProducer>();
 
+    // Used to bound the active-send wait when the user opts out of confirms (timeout=0).
+    // Active sends in flight at dispose time should not be aborted: outbox would mark them Dispatched
+    // while the broker may not yet have accepted the frame, producing duplicates on the next sweep.
+    private const int DefaultActiveSendsShutdownTimeoutMs = 5000;
+
     private RmqPublication _publication;
     private readonly Dictionary<ulong, string> _pendingConfirmations = new();
     private readonly object _stateLock = new();
@@ -196,9 +201,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         {
             Log.ErrorTalkingToSocketAsync(s_logger, io, Connection.AmpqUri!.GetSanitizedUri());
             ClearPendingConfirmations();
+            // Capture the failed channel before reset; otherwise the detach fires on the recovered channel
+            // and the next send loses confirm tracking.
+            var failedChannel = Channel;
             await ResetConnectionToBrokerAsync(cancellationToken);
-            Channel?.BasicAcksAsync -= OnPublishSucceeded;
-            Channel?.BasicNacksAsync -= OnPublishFailed;
+            if (failedChannel is not null)
+            {
+                failedChannel.BasicAcksAsync -= OnPublishSucceeded;
+                failedChannel.BasicNacksAsync -= OnPublishFailed;
+            }
             throw new ChannelFailureException("Error talking to the broker, see inner exception for details", io);
         }
         finally
@@ -295,11 +306,14 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             activeSendsCompleted = _activeSendsCompleted.Task;
         }
 
-        if (_waitForConfirmsTimeOutInMilliseconds == 0)
-            return;
+        // Always wait for in-flight sends, even when the user opted out of confirm waits (timeout=0).
+        // See DefaultActiveSendsShutdownTimeoutMs comment for rationale.
+        var waitMilliseconds = _waitForConfirmsTimeOutInMilliseconds > 0
+            ? _waitForConfirmsTimeOutInMilliseconds
+            : DefaultActiveSendsShutdownTimeoutMs;
 
         using var timeoutCancellation = new CancellationTokenSource();
-        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds), timeoutCancellation.Token);
+        var timeout = Task.Delay(TimeSpan.FromMilliseconds(waitMilliseconds), timeoutCancellation.Token);
         var completed = await Task.WhenAny(activeSendsCompleted, timeout);
 
         if (completed == activeSendsCompleted)
@@ -390,8 +404,12 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
 
         foreach (var pendingDeliveryTag in deliveryTagsToRemove)
         {
-            if (_pendingConfirmations.Remove(pendingDeliveryTag, out var messageId))
+            // Dictionary.Remove(key, out value) is unavailable on netstandard2.0; use the lookup-then-remove pattern.
+            if (_pendingConfirmations.TryGetValue(pendingDeliveryTag, out var messageId))
+            {
+                _pendingConfirmations.Remove(pendingDeliveryTag);
                 messageIds.Add(messageId);
+            }
         }
 
         return messageIds;
