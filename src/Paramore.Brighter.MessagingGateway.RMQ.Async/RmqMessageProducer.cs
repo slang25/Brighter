@@ -55,8 +55,8 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private readonly Dictionary<ulong, string> _pendingConfirmations = new();
     private readonly object _stateLock = new();
     private readonly int _waitForConfirmsTimeOutInMilliseconds;
-    private TaskCompletionSource<bool> _activeSendsCompleted = CompletedTask();
-    private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedTask();
+    private TaskCompletionSource<bool> _activeSendsCompleted = NewCompletedTaskCompletionSource();
+    private TaskCompletionSource<bool> _publisherConfirmationsCompleted = NewCompletedTaskCompletionSource();
     // Producer disposal has confirmation-specific work, so it has its own guard.
     // The base guard separately protects channel and pool cleanup after producer shutdown.
     private int _activeSends;
@@ -257,7 +257,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             ThrowIfDisposed();
 
             if (_activeSends == 0)
-                _activeSendsCompleted = PendingTask();
+                _activeSendsCompleted = NewPendingTaskCompletionSource();
 
             _activeSends++;
         }
@@ -332,9 +332,9 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         lock (_stateLock)
         {
             if (_pendingConfirmations.Count == 0)
-                _publisherConfirmationsCompleted = PendingTask();
+                _publisherConfirmationsCompleted = NewPendingTaskCompletionSource();
 
-            _pendingConfirmations.Add(deliveryTag, messageId);
+            _pendingConfirmations[deliveryTag] = messageId;
         }
     }
 
@@ -386,14 +386,14 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private static bool IsConfirmedBy(ulong pendingDeliveryTag, ulong deliveryTag, bool multiple)
         => multiple ? pendingDeliveryTag <= deliveryTag : pendingDeliveryTag == deliveryTag;
 
-    private static TaskCompletionSource<bool> CompletedTask()
+    private static TaskCompletionSource<bool> NewCompletedTaskCompletionSource()
     {
-        var taskCompletionSource = PendingTask();
+        var taskCompletionSource = NewPendingTaskCompletionSource();
         taskCompletionSource.SetResult(true);
         return taskCompletionSource;
     }
 
-    private static TaskCompletionSource<bool> PendingTask()
+    private static TaskCompletionSource<bool> NewPendingTaskCompletionSource()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private void DetachPublisherConfirmHandlers()
