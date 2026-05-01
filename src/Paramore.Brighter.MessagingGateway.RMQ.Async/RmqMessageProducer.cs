@@ -255,6 +255,8 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         }
 
         base.Dispose();
+        // Explicit for symmetry with DisposeAsync; base.Dispose() also suppresses, so this is defensive.
+        GC.SuppressFinalize(this);
     }
 
     public sealed override async ValueTask DisposeAsync()
