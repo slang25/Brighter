@@ -57,7 +57,8 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private readonly int _waitForConfirmsTimeOutInMilliseconds;
     private TaskCompletionSource<bool> _activeSendsCompleted = CompletedTask();
     private TaskCompletionSource<bool> _publisherConfirmationsCompleted = CompletedTask();
-    // Producer disposal has confirmation-specific work; the base guard separately protects channel and pool cleanup.
+    // Producer disposal has confirmation-specific work, so it has its own guard.
+    // The base guard separately protects channel and pool cleanup after producer shutdown.
     private int _activeSends;
     private int _disposed;
 
@@ -193,6 +194,7 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         catch (IOException io)
         {
             Log.ErrorTalkingToSocketAsync(s_logger, io, Connection.AmpqUri!.GetSanitizedUri());
+            ClearPendingConfirmations();
             await ResetConnectionToBrokerAsync(cancellationToken);
             Channel?.BasicAcksAsync -= OnPublishSucceeded;
             Channel?.BasicNacksAsync -= OnPublishFailed;
@@ -335,6 +337,15 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
                 _publisherConfirmationsCompleted = PendingTask();
 
             _pendingConfirmations.Add(deliveryTag, messageId);
+        }
+    }
+
+    private void ClearPendingConfirmations()
+    {
+        lock (_stateLock)
+        {
+            _pendingConfirmations.Clear();
+            _publisherConfirmationsCompleted.TrySetResult(true);
         }
     }
 

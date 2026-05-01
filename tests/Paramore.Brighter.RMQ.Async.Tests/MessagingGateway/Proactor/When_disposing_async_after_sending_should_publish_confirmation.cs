@@ -81,6 +81,7 @@ public class RmqMessageProducerDisposeAsyncConfirmationTests : IDisposable, IAsy
         await _messageProducer.DisposeAsync();
 
         // Assert
+        // DisposeAsync waits for confirms; the timeout keeps failures bounded if that contract regresses.
         Assert.True(await _published.Task.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
