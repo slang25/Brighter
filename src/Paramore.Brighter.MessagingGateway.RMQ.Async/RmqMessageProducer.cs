@@ -340,7 +340,16 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             return;
         }
 
-        Log.FailedToAwaitActiveSends(s_logger);
+        int activeSends;
+        lock (_stateLock)
+        {
+            activeSends = _activeSends;
+        }
+
+        if (activeSends == 0)
+            return;
+
+        Log.FailedToAwaitActiveSends(s_logger, activeSends, waitMilliseconds);
     }
 
     private void WaitForPendingPublisherConfirmations() => BrighterAsyncContext.Run(WaitForPendingPublisherConfirmationsAsync);
@@ -348,20 +357,23 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
     private async Task WaitForPendingPublisherConfirmationsAsync()
     {
         Task publisherConfirmationsCompleted;
+        var waitMilliseconds = _waitForConfirmsTimeOutInMilliseconds;
 
+        // _stateLock protects pending confirmations, not Channel. Disposal has already blocked new sends
+        // and drained active sends, so the producer send path cannot replace Channel while this snapshot is taken.
         lock (_stateLock)
         {
             if (Channel is not { IsOpen: true } || _pendingConfirmations.Count == 0)
                 return;
 
-            if (_waitForConfirmsTimeOutInMilliseconds == 0)
+            if (waitMilliseconds == 0)
                 return;
 
             publisherConfirmationsCompleted = _publisherConfirmationsCompleted.Task;
         }
 
         using var timeoutCancellation = new CancellationTokenSource();
-        var timeout = Task.Delay(TimeSpan.FromMilliseconds(_waitForConfirmsTimeOutInMilliseconds), timeoutCancellation.Token);
+        var timeout = Task.Delay(TimeSpan.FromMilliseconds(waitMilliseconds), timeoutCancellation.Token);
         var completed = await Task.WhenAny(publisherConfirmationsCompleted, timeout);
 
         if (completed == publisherConfirmationsCompleted)
@@ -370,7 +382,16 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
             return;
         }
 
-        Log.FailedToAwaitPublisherConfirms(s_logger);
+        int pendingConfirmations;
+        lock (_stateLock)
+        {
+            pendingConfirmations = _pendingConfirmations.Count;
+        }
+
+        if (pendingConfirmations == 0)
+            return;
+
+        Log.FailedToAwaitPublisherConfirms(s_logger, pendingConfirmations, waitMilliseconds);
     }
 
     private void AddPendingConfirmation(ulong deliveryTag, string messageId)
@@ -491,11 +512,11 @@ public partial class RmqMessageProducer : RmqMessageGateway, IAmAMessageProducer
         [LoggerMessage(LogLevel.Debug, "Failed to publish message: {MessageId}")]
         public static partial void FailedToPublishMessageAsync(ILogger logger, string messageId);
 
-        [LoggerMessage(LogLevel.Warning, "Failed to await publisher confirms when shutting down")]
-        public static partial void FailedToAwaitPublisherConfirms(ILogger logger);
+        [LoggerMessage(LogLevel.Warning, "Failed to await {PendingCount} publisher confirms after {TimeoutMs}ms when shutting down")]
+        public static partial void FailedToAwaitPublisherConfirms(ILogger logger, int pendingCount, int timeoutMs);
 
-        [LoggerMessage(LogLevel.Warning, "Failed to await active sends when shutting down")]
-        public static partial void FailedToAwaitActiveSends(ILogger logger);
+        [LoggerMessage(LogLevel.Warning, "Failed to await {ActiveSendCount} active sends after {TimeoutMs}ms when shutting down")]
+        public static partial void FailedToAwaitActiveSends(ILogger logger, int activeSendCount, int timeoutMs);
 
         [LoggerMessage(LogLevel.Information, "Published message: {MessageId}")]
         public static partial void PublishedMessage(ILogger logger, string messageId);
