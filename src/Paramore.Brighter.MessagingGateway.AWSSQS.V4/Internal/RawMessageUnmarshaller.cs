@@ -21,7 +21,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE. */
 #endregion
 
+using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Text.Json;
 using Amazon.Runtime.Internal.Transform;
 using Amazon.Runtime.Internal.Util;
@@ -50,104 +52,109 @@ internal sealed class RawMessageUnmarshaller
         if (!context.IsEmptyResponse)
         {
             context.Read(ref reader);
-            if (context.CurrentTokenType == JsonTokenType.Null)
-            {
-                return null!;
-            }
+            if (context.CurrentTokenType == JsonTokenType.Null) return null!;
         }
 
         var depth = context.CurrentDepth;
         while (context.ReadAtDepth(depth, ref reader))
         {
-            if (context.TestExpression("Body", depth))
-            {
-                message.BodyBytes = ReadBodyBytes(context, ref reader);
-                continue;
-            }
-            if (context.TestExpression("MessageId", depth))
-            {
-                message.MessageId = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
-                continue;
-            }
-            if (context.TestExpression("ReceiptHandle", depth))
-            {
-                message.ReceiptHandle = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
-                continue;
-            }
-            if (context.TestExpression("MD5OfBody", depth))
-            {
-                message.MD5OfBody = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
-                continue;
-            }
-            if (context.TestExpression("MD5OfMessageAttributes", depth))
-            {
-                message.MD5OfMessageAttributes = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
-                continue;
-            }
-            if (context.TestExpression("Attributes", depth))
-            {
-                var dict = new JsonDictionaryUnmarshaller<string, string, StringUnmarshaller, StringUnmarshaller>(
-                    StringUnmarshaller.Instance, StringUnmarshaller.Instance);
-                message.Attributes = dict.Unmarshall(context, ref reader) ?? new();
-                continue;
-            }
-            if (context.TestExpression("MessageAttributes", depth))
-            {
-                var dict = new JsonDictionaryUnmarshaller<string, MessageAttributeValue, StringUnmarshaller, MessageAttributeValueUnmarshaller>(
-                    StringUnmarshaller.Instance, MessageAttributeValueUnmarshaller.Instance);
-                message.MessageAttributes = dict.Unmarshall(context, ref reader) ?? new();
-                continue;
-            }
+            ReadField(message, context, ref reader, depth);
         }
 
         return message;
     }
 
-    private static System.ReadOnlyMemory<byte> ReadBodyBytes(JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader)
+    private static void ReadField(RawMessage message, JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader, int depth)
+    {
+        if (context.TestExpression("Body", depth))
+        {
+            message.BodyBytes = ReadBodyBytes(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("MessageId", depth))
+        {
+            message.MessageId = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("ReceiptHandle", depth))
+        {
+            message.ReceiptHandle = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("MD5OfBody", depth))
+        {
+            message.MD5OfBody = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("MD5OfMessageAttributes", depth))
+        {
+            message.MD5OfMessageAttributes = StringUnmarshaller.Instance.Unmarshall(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("Attributes", depth))
+        {
+            message.Attributes = ReadAttributes(context, ref reader);
+            return;
+        }
+        if (context.TestExpression("MessageAttributes", depth))
+        {
+            message.MessageAttributes = ReadMessageAttributes(context, ref reader);
+        }
+    }
+
+    private static Dictionary<string, string> ReadAttributes(JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader)
+    {
+        var dict = new JsonDictionaryUnmarshaller<string, string, StringUnmarshaller, StringUnmarshaller>(
+            StringUnmarshaller.Instance, StringUnmarshaller.Instance);
+        return dict.Unmarshall(context, ref reader) ?? new();
+    }
+
+    private static Dictionary<string, MessageAttributeValue> ReadMessageAttributes(JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader)
+    {
+        var dict = new JsonDictionaryUnmarshaller<string, MessageAttributeValue, StringUnmarshaller, MessageAttributeValueUnmarshaller>(
+            StringUnmarshaller.Instance, MessageAttributeValueUnmarshaller.Instance);
+        return dict.Unmarshall(context, ref reader) ?? new();
+    }
+
+    private static ReadOnlyMemory<byte> ReadBodyBytes(JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader)
     {
         // Advance to the value token for the current "Body" property.
         context.Read(ref reader);
 
         var jsonReader = reader.Reader;
-        if (jsonReader.TokenType == JsonTokenType.Null)
-        {
-            return System.ReadOnlyMemory<byte>.Empty;
-        }
+        if (jsonReader.TokenType == JsonTokenType.Null) return ReadOnlyMemory<byte>.Empty;
 
-        // Body is a JSON string in the SQS protocol. Copy the unescaped UTF-8 bytes
-        // (the user's payload) into a freshly-allocated array so the buffer is safe
-        // to retain past the SDK's response-stream lifetime.
+        // Body is a JSON string in the SQS protocol; an unexpected token type is a
+        // protocol violation we surface loudly rather than silently dropping data.
         if (jsonReader.TokenType != JsonTokenType.String)
         {
-            // SQS Body is always a JSON string; an unexpected token type is a
-            // protocol violation. Surface it loudly rather than silently dropping
-            // data.
-            throw new System.Text.Json.JsonException(
-                $"Expected JSON string for SQS Message.Body but found {jsonReader.TokenType}.");
+            throw new JsonException($"Expected JSON string for SQS Message.Body but found {jsonReader.TokenType}.");
         }
 
-        if (!jsonReader.ValueIsEscaped)
+        // Copy the unescaped UTF-8 bytes (the user's payload) into a freshly-allocated
+        // array so the buffer is safe to retain past the SDK's response-stream lifetime.
+        return jsonReader.ValueIsEscaped
+            ? CopyEscaped(ref jsonReader)
+            : CopyUnescaped(ref jsonReader);
+    }
+
+    private static byte[] CopyUnescaped(ref Utf8JsonReader jsonReader)
+    {
+        if (!jsonReader.HasValueSequence)
         {
-            if (jsonReader.HasValueSequence)
-            {
-                var seq = jsonReader.ValueSequence;
-                var len = checked((int)seq.Length);
-                var copy = new byte[len];
-                seq.CopyTo(copy);
-                return copy;
-            }
-            else
-            {
-                var span = jsonReader.ValueSpan;
-                var copy = new byte[span.Length];
-                span.CopyTo(copy);
-                return copy;
-            }
+            return jsonReader.ValueSpan.ToArray();
         }
 
-        // Escaped path: copy the unescaped value into a pooled scratch buffer to
-        // determine the actual length, then trim into a right-sized array. The
-        // pooled buffer is returned before we leave the method.
+        var seq = jsonReader.ValueSequence;
+        var copy = new byte[checked((int)seq.Length)];
+        seq.CopyTo(copy);
+        return copy;
+    }
+
+    private static byte[] CopyEscaped(ref Utf8JsonReader jsonReader)
+    {
+        // The unescaped value can only shrink, so the source length is a safe upper
+        // bound for the scratch buffer.
         var maxLen = jsonReader.HasValueSequence
             ? checked((int)jsonReader.ValueSequence.Length)
             : jsonReader.ValueSpan.Length;
@@ -156,7 +163,7 @@ internal sealed class RawMessageUnmarshaller
         {
             var written = jsonReader.CopyString(scratch);
             var copy = new byte[written];
-            System.Buffer.BlockCopy(scratch, 0, copy, 0, written);
+            Buffer.BlockCopy(scratch, 0, copy, 0, written);
             return copy;
         }
         finally
@@ -164,5 +171,4 @@ internal sealed class RawMessageUnmarshaller
             ArrayPool<byte>.Shared.Return(scratch);
         }
     }
-
 }
