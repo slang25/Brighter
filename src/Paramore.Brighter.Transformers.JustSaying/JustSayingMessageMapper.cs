@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using System.Net.Mime;
 using System.Text.Json;
 using System.Threading;
@@ -218,11 +220,48 @@ public class JustSayingMessageMapper<TMessage> : IAmAMessageMapper<TMessage>, IA
     }
 
     /// <inheritdoc />
-    public TMessage MapToRequest(Message message) 
+    public TMessage MapToRequest(Message message)
+    {
+        var body = message.Body.Memory;
+        if (IsJustSayingGzipBase64(message))
+        {
+            return DeserializeCompressed(body);
+        }
+
 #if NETSTANDARD2_0
-        => JsonSerializer.Deserialize<TMessage>(message.Body.Memory.ToArray(), JsonSerialisationOptions.Options)!;
+        return JsonSerializer.Deserialize<TMessage>(body.ToArray(), JsonSerialisationOptions.Options)!;
 #else
-        => JsonSerializer.Deserialize<TMessage>(message.Body.Memory.Span, JsonSerialisationOptions.Options)!;
+        return JsonSerializer.Deserialize<TMessage>(body.Span, JsonSerialisationOptions.Options)!;
 #endif
+    }
+
+    private static bool IsJustSayingGzipBase64(Message message)
+    {
+        // JustSaying signals compression via a "Content-Encoding" SNS message attribute. The AWS
+        // SQS gateway surfaces foreign message attributes into MessageHeader.Bag under their raw
+        // name, so we look it up there.
+        return message.Header.Bag.TryGetValue(JustSayingAttributesName.ContentEncoding, out var encoding)
+               && encoding is string s
+               && string.Equals(s, JustSayingAttributesName.GzipBase64ContentEncoding, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TMessage DeserializeCompressed(ReadOnlyMemory<byte> body)
+    {
+        // Body is base64(gzip(json)); base64-decode then gunzip before deserializing.
+        var base64 = System.Text.Encoding.ASCII.GetString(body.ToArray());
+        var gzipped = Convert.FromBase64String(base64);
+
+        using var input = new MemoryStream(gzipped, writable: false);
+        using var gz = new GZipStream(input, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        gz.CopyTo(output);
+
+        if (output.TryGetBuffer(out var buffer))
+        {
+            return JsonSerializer.Deserialize<TMessage>(buffer.AsSpan(), JsonSerialisationOptions.Options)!;
+        }
+
+        return JsonSerializer.Deserialize<TMessage>(output.ToArray(), JsonSerialisationOptions.Options)!;
+    }
 }
 

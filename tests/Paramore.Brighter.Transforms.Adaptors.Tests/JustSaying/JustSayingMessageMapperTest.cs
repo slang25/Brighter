@@ -1,5 +1,9 @@
 ﻿using System;
+using System.IO;
+using System.IO.Compression;
 using System.Net;
+using System.Net.Mime;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Paramore.Brighter.JsonConverters;
@@ -326,6 +330,70 @@ public class JustSayingMessageMapperTest
         Assert.Equal(MessageType.MT_COMMAND, message.Header.MessageType);
     }
     
+    [Fact]
+    public void MapToRequest_when_body_is_uncompressed_should_deserialize_as_json()
+    {
+        var mapper = new JustSayingMessageMapper<SomeJustSayingCommand>();
+        var command = new SomeJustSayingCommand
+        {
+            Id = Guid.NewGuid().ToString(),
+            Conversation = $"Conversation{Guid.NewGuid()}",
+            RaisingComponent = $"Raising{Guid.NewGuid()}",
+            Tenant = $"Tenant{Guid.NewGuid()}",
+            Version = $"Version{Guid.NewGuid()}",
+            TimeStamp = DateTimeOffset.UtcNow,
+            Name = $"Name{Guid.NewGuid()}",
+        };
+
+        var json = JsonSerializer.SerializeToUtf8Bytes(command, JsonSerialisationOptions.Options);
+        var message = new Message(new MessageHeader(), new MessageBody(json, new ContentType("application/json")));
+
+        var result = mapper.MapToRequest(message);
+
+        Assert.Equal(command.Id, result.Id);
+        Assert.Equal(command.Name, result.Name);
+        Assert.Equal(command.Tenant, result.Tenant);
+    }
+
+    [Fact]
+    public void MapToRequest_when_body_is_justsaying_gzip_base64_should_decompress_before_deserializing()
+    {
+        var mapper = new JustSayingMessageMapper<SomeJustSayingCommand>();
+        var command = new SomeJustSayingCommand
+        {
+            Id = Guid.NewGuid().ToString(),
+            Conversation = $"Conversation{Guid.NewGuid()}",
+            RaisingComponent = $"Raising{Guid.NewGuid()}",
+            Tenant = $"Tenant{Guid.NewGuid()}",
+            Version = $"Version{Guid.NewGuid()}",
+            TimeStamp = DateTimeOffset.UtcNow,
+            Name = new string('x', 4096),
+        };
+
+        var compressedBody = GzipBase64Encode(command);
+        var header = new MessageHeader();
+        header.Bag[JustSayingAttributesName.ContentEncoding] = JustSayingAttributesName.GzipBase64ContentEncoding;
+        var message = new Message(header, new MessageBody(Encoding.ASCII.GetBytes(compressedBody), new ContentType("application/json")));
+
+        var result = mapper.MapToRequest(message);
+
+        Assert.Equal(command.Id, result.Id);
+        Assert.Equal(command.Name, result.Name);
+        Assert.Equal(command.Tenant, result.Tenant);
+    }
+
+    private static string GzipBase64Encode<T>(T value)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(value, JsonSerialisationOptions.Options);
+        using var output = new MemoryStream();
+        using (var gz = new GZipStream(output, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            gz.Write(json, 0, json.Length);
+        }
+
+        return Convert.ToBase64String(output.ToArray());
+    }
+
     public class SomeJustSayingCommand : JustSayingCommand
     {
         public string Name { get; set; } = string.Empty;
