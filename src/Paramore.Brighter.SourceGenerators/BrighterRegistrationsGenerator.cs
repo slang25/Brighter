@@ -158,46 +158,73 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
 
         foreach (var type in EnumerateNamedTypes(compilation.SourceModule.GlobalNamespace))
         {
-            if (type.TypeKind != TypeKind.Class)
-                continue;
-            if (type.IsAbstract || type.IsImplicitClass || type.IsAnonymousType)
-                continue;
-            if (!IsReachableFromGeneratedCode(type))
-                continue;
-            if (excludeAttr is not null && type.GetAttributes().Any(a =>
-                    SymbolEqualityComparer.Default.Equals(a.AttributeClass, excludeAttr)))
+            if (!IsRegistrationCandidate(type, excludeAttr))
                 continue;
 
-            var isTransform = false;
-            foreach (var iface in type.AllInterfaces)
-            {
-                if (iface.IsGenericType && iface.TypeArguments.Length == 1)
-                {
-                    var def = iface.OriginalDefinition;
-                    var requestType = iface.TypeArguments[0];
-
-                    if (SymbolEqualityComparer.Default.Equals(def, symbols.HandleRequests))
-                        result.Handlers.Add((requestType, type));
-                    else if (SymbolEqualityComparer.Default.Equals(def, symbols.HandleRequestsAsync))
-                        result.AsyncHandlers.Add((requestType, type));
-                    else if (SymbolEqualityComparer.Default.Equals(def, symbols.MessageMapper) && !type.IsGenericType)
-                        result.Mappers.Add((requestType, type));
-                    else if (SymbolEqualityComparer.Default.Equals(def, symbols.MessageMapperAsync) && !type.IsGenericType)
-                        result.AsyncMappers.Add((requestType, type));
-                }
-                else if (SymbolEqualityComparer.Default.Equals(iface, symbols.MessageTransform) ||
-                         SymbolEqualityComparer.Default.Equals(iface, symbols.MessageTransformAsync))
-                {
-                    isTransform = true;
-                }
-            }
-
-            if (isTransform && !type.IsGenericType)
-                result.Transforms.Add(type);
+            ClassifyType(type, symbols, result);
         }
 
         return result;
     }
+
+    private static bool IsRegistrationCandidate(INamedTypeSymbol type, INamedTypeSymbol? excludeAttr)
+    {
+        if (type.TypeKind != TypeKind.Class)
+            return false;
+        if (type.IsAbstract || type.IsImplicitClass || type.IsAnonymousType)
+            return false;
+        if (!IsReachableFromGeneratedCode(type))
+            return false;
+        if (excludeAttr is not null && HasAttribute(type, excludeAttr))
+            return false;
+        return true;
+    }
+
+    private static bool HasAttribute(INamedTypeSymbol type, INamedTypeSymbol attribute) =>
+        type.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, attribute));
+
+    private static void ClassifyType(INamedTypeSymbol type, MarkerSymbols symbols, Registrations result)
+    {
+        var isTransform = false;
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (TryClassifyGenericInterface(type, iface, symbols, result))
+                continue;
+            if (IsTransformInterface(iface, symbols))
+                isTransform = true;
+        }
+
+        if (isTransform && !type.IsGenericType)
+            result.Transforms.Add(type);
+    }
+
+    private static bool TryClassifyGenericInterface(
+        INamedTypeSymbol type,
+        INamedTypeSymbol iface,
+        MarkerSymbols symbols,
+        Registrations result)
+    {
+        if (!iface.IsGenericType || iface.TypeArguments.Length != 1)
+            return false;
+
+        var def = iface.OriginalDefinition;
+        var requestType = iface.TypeArguments[0];
+
+        if (SymbolEqualityComparer.Default.Equals(def, symbols.HandleRequests))
+            result.Handlers.Add((requestType, type));
+        else if (SymbolEqualityComparer.Default.Equals(def, symbols.HandleRequestsAsync))
+            result.AsyncHandlers.Add((requestType, type));
+        else if (SymbolEqualityComparer.Default.Equals(def, symbols.MessageMapper) && !type.IsGenericType)
+            result.Mappers.Add((requestType, type));
+        else if (SymbolEqualityComparer.Default.Equals(def, symbols.MessageMapperAsync) && !type.IsGenericType)
+            result.AsyncMappers.Add((requestType, type));
+
+        return true;
+    }
+
+    private static bool IsTransformInterface(INamedTypeSymbol iface, MarkerSymbols symbols) =>
+        SymbolEqualityComparer.Default.Equals(iface, symbols.MessageTransform) ||
+        SymbolEqualityComparer.Default.Equals(iface, symbols.MessageTransformAsync);
 
     private static bool IsReachableFromGeneratedCode(INamedTypeSymbol type)
     {
@@ -298,7 +325,7 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
 
         foreach (var (request, handler) in entries)
         {
-            if (handler.IsUnboundGenericType || handler.IsGenericType && handler.TypeParameters.Length > 0 && handler.IsDefinition)
+            if (IsOpenGeneric(handler))
             {
                 sb.Append("                registry.EnsureHandlerIsRegistered(typeof(")
                     .Append(UnboundGenericName(handler))
@@ -374,6 +401,9 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
     private static string FullyQualified(ITypeSymbol type) =>
         type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
+    private static bool IsOpenGeneric(INamedTypeSymbol type) =>
+        type.IsUnboundGenericType || (type.IsGenericType && type.IsDefinition);
+
     private static string UnboundGenericName(INamedTypeSymbol type)
     {
         // Emit typeof(Foo<>) syntax for open generics. FullyQualifiedFormat produces Foo<T>;
@@ -399,31 +429,13 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
 
     private sealed class MarkerSymbols
     {
-        public INamedTypeSymbol? BrighterBuilder { get; }
-        public INamedTypeSymbol? HandleRequests { get; }
-        public INamedTypeSymbol? HandleRequestsAsync { get; }
-        public INamedTypeSymbol? MessageMapper { get; }
-        public INamedTypeSymbol? MessageMapperAsync { get; }
-        public INamedTypeSymbol? MessageTransform { get; }
-        public INamedTypeSymbol? MessageTransformAsync { get; }
-
-        private MarkerSymbols(
-            INamedTypeSymbol? brighterBuilder,
-            INamedTypeSymbol? handleRequests,
-            INamedTypeSymbol? handleRequestsAsync,
-            INamedTypeSymbol? messageMapper,
-            INamedTypeSymbol? messageMapperAsync,
-            INamedTypeSymbol? messageTransform,
-            INamedTypeSymbol? messageTransformAsync)
-        {
-            BrighterBuilder = brighterBuilder;
-            HandleRequests = handleRequests;
-            HandleRequestsAsync = handleRequestsAsync;
-            MessageMapper = messageMapper;
-            MessageMapperAsync = messageMapperAsync;
-            MessageTransform = messageTransform;
-            MessageTransformAsync = messageTransformAsync;
-        }
+        public INamedTypeSymbol? BrighterBuilder { get; private set; }
+        public INamedTypeSymbol? HandleRequests { get; private set; }
+        public INamedTypeSymbol? HandleRequestsAsync { get; private set; }
+        public INamedTypeSymbol? MessageMapper { get; private set; }
+        public INamedTypeSymbol? MessageMapperAsync { get; private set; }
+        public INamedTypeSymbol? MessageTransform { get; private set; }
+        public INamedTypeSymbol? MessageTransformAsync { get; private set; }
 
         public bool IsValid =>
             BrighterBuilder is not null &&
@@ -434,14 +446,16 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
             MessageTransform is not null &&
             MessageTransformAsync is not null;
 
-        public static MarkerSymbols Resolve(Compilation c) => new(
-            c.GetTypeByMetadataName("Paramore.Brighter.Extensions.DependencyInjection.IBrighterBuilder"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IHandleRequests`1"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IHandleRequestsAsync`1"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageMapper`1"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageMapperAsync`1"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageTransform"),
-            c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageTransformAsync"));
+        public static MarkerSymbols Resolve(Compilation c) => new()
+        {
+            BrighterBuilder = c.GetTypeByMetadataName("Paramore.Brighter.Extensions.DependencyInjection.IBrighterBuilder"),
+            HandleRequests = c.GetTypeByMetadataName("Paramore.Brighter.IHandleRequests`1"),
+            HandleRequestsAsync = c.GetTypeByMetadataName("Paramore.Brighter.IHandleRequestsAsync`1"),
+            MessageMapper = c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageMapper`1"),
+            MessageMapperAsync = c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageMapperAsync`1"),
+            MessageTransform = c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageTransform"),
+            MessageTransformAsync = c.GetTypeByMetadataName("Paramore.Brighter.IAmAMessageTransformAsync"),
+        };
     }
 
     private sealed class Registrations
