@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Buffers.Text;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
@@ -59,8 +61,7 @@ public class JustSayingCompressionTransform : IAmAMessageTransform, IAmAMessageT
             return message;
         }
 
-        var decompressed = DecodeGzipBase64(message.Body.Memory);
-        message.Body = new MessageBody(decompressed, message.Header.ContentType);
+        message.Body = new MessageBody(DecodeGzipBase64(message.Body.Memory.Span), message.Header.ContentType);
         return message;
     }
 
@@ -80,15 +81,35 @@ public class JustSayingCompressionTransform : IAmAMessageTransform, IAmAMessageT
                && string.Equals(s, JustSayingAttributesName.GzipBase64ContentEncoding, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static byte[] DecodeGzipBase64(ReadOnlyMemory<byte> body)
+    private static ReadOnlyMemory<byte> DecodeGzipBase64(ReadOnlySpan<byte> body)
     {
-        var base64 = System.Text.Encoding.ASCII.GetString(body.ToArray());
-        var gzipped = Convert.FromBase64String(base64);
+        // body is the UTF-8/ASCII base64 representation; Base64.DecodeFromUtf8 reads it
+        // directly so we don't materialise a string or a Convert.FromBase64String buffer.
+        var decoded = ArrayPool<byte>.Shared.Rent(Base64.GetMaxDecodedFromUtf8Length(body.Length));
+        try
+        {
+            var status = Base64.DecodeFromUtf8(body, decoded, out _, out var decodedLength);
+            if (status != OperationStatus.Done)
+            {
+                throw new InvalidOperationException(
+                    $"Message body marked as {JustSayingAttributesName.GzipBase64ContentEncoding} contained invalid base64 (status: {status}).");
+            }
 
-        using var input = new MemoryStream(gzipped, writable: false);
-        using var gz = new GZipStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        gz.CopyTo(output);
-        return output.ToArray();
+            using var input = new MemoryStream(decoded, 0, decodedLength, writable: false);
+            using var gz = new GZipStream(input, CompressionMode.Decompress);
+            // Typical JSON payloads compress ~3-5x; seed the output buffer to skip an early grow.
+            using var output = new MemoryStream(capacity: decodedLength * 4);
+            gz.CopyTo(output);
+
+            // MemoryStream.Dispose does not free the internal byte[]; TryGetBuffer hands us a
+            // segment we can wrap and return without an extra copy.
+            return output.TryGetBuffer(out var buffer)
+                ? new ReadOnlyMemory<byte>(buffer.Array!, buffer.Offset, buffer.Count)
+                : output.ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(decoded);
+        }
     }
 }
