@@ -263,7 +263,9 @@ internal sealed partial class SqsMessageCreator : SqsMessageCreatorBase, ISqsMes
         {
             if (HeaderNames.IsKnown(attribute.Key) || bag.ContainsKey(attribute.Key))
                 continue;
-            bag[attribute.Key] = attribute.Value.StringValue;
+            var raw = attribute.Value.StringValue;
+            if (raw != null)
+                bag[attribute.Key] = raw;
         }
 
         return bag;
