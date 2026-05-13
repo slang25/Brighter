@@ -258,6 +258,9 @@ internal sealed partial class SqsMessageCreator : SqsMessageCreatorBase, ISqsMes
             }
         }
 
+        if (sqsMessage.MessageAttributes is null)
+            return bag;
+
         // Surface inbound MessageAttributes Brighter doesn't already consume so foreign producers'
         // metadata can flow through to consumers via the bag. Entries already present in Brighter's
         // own JSON bag attribute take precedence.
