@@ -1,0 +1,48 @@
+# Depot CI Migration
+# Source: .github/workflows/ci-metrics.yml
+#
+# Changes made:
+# - Changed GitHub runs-on labels to their Depot equivalents
+
+name: CI Metrics and Monitoring
+# This workflow tracks CI pass rates, job durations, and failure rates
+# to help maintain and improve CI reliability over time.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+  schedule:
+    # Run daily at 00:00 UTC to generate summary reports
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+jobs:
+  collect-metrics:
+    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    if: github.event.workflow_run.conclusion != 'skipped'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Collect CI workflow metrics
+        id: metrics
+        uses: actions/github-script@v9
+        with:
+          script: "const owner = context.repo.owner;\nconst repo = context.repo.repo;\n\n// Get the last 30 CI workflow runs\nconst { data: runs } = await github.rest.actions.listWorkflowRuns({\n  owner,\n  repo,\n  workflow_id: 'ci.yml',\n  per_page: 30,\n  status: 'completed'\n});\n\n// Calculate metrics\nconst totalRuns = runs.workflow_runs.length;\nconst successfulRuns = runs.workflow_runs.filter(r => r.conclusion === 'success').length;\nconst failedRuns = runs.workflow_runs.filter(r => r.conclusion === 'failure').length;\nconst cancelledRuns = runs.workflow_runs.filter(r => r.conclusion === 'cancelled').length;\nconst passRate = totalRuns > 0 ? ((successfulRuns / totalRuns) * 100).toFixed(2) : 0;\n\n// Calculate average duration (in minutes)\nconst durations = runs.workflow_runs\n  .filter(r => r.run_started_at && r.updated_at)\n  .map(r => {\n    const start = new Date(r.run_started_at);\n    const end = new Date(r.updated_at);\n    return (end - start) / 1000 / 60; // Convert to minutes\n  });\n\nconst avgDuration = durations.length > 0 \n  ? (durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(2)\n  : 0;\n\nconst maxDuration = durations.length > 0 \n  ? Math.max(...durations).toFixed(2)\n  : 0;\n\n// Count runs over 7 minutes\nconst slowRuns = durations.filter(d => d > 7).length;\n\n// Store metrics\ncore.setOutput('total_runs', totalRuns);\ncore.setOutput('pass_rate', passRate);\ncore.setOutput('successful_runs', successfulRuns);\ncore.setOutput('failed_runs', failedRuns);\ncore.setOutput('cancelled_runs', cancelledRuns);\ncore.setOutput('avg_duration', avgDuration);\ncore.setOutput('max_duration', maxDuration);\ncore.setOutput('slow_runs', slowRuns);\n\n// Generate summary\nconst summary = `\n## CI Metrics (Last 30 Runs)\n\n| Metric | Value |\n|--------|-------|\n| Total Runs | ${totalRuns} |\n| Pass Rate | ${passRate}% |\n| Successful | ${successfulRuns} |\n| Failed | ${failedRuns} |\n| Cancelled | ${cancelledRuns} |\n| Avg Duration | ${avgDuration} min |\n| Max Duration | ${maxDuration} min |\n| Runs >7 min | ${slowRuns} |\n`;\n\nawait core.summary\n  .addRaw(summary)\n  .write();\n\nconsole.log(summary);\n\nreturn {\n  total_runs: totalRuns,\n  pass_rate: passRate,\n  successful_runs: successfulRuns,\n  failed_runs: failedRuns,\n  cancelled_runs: cancelledRuns,\n  avg_duration: avgDuration,\n  max_duration: maxDuration,\n  slow_runs: slowRuns\n};\n"
+      - name: Check for performance degradation
+        uses: actions/github-script@v9
+        with:
+          script: "const passRate = parseFloat('${{ steps.metrics.outputs.pass_rate }}');\nconst slowRuns = parseInt('${{ steps.metrics.outputs.slow_runs }}');\nconst avgDuration = parseFloat('${{ steps.metrics.outputs.avg_duration }}');\n\nlet alerts = [];\n\n// Alert if pass rate is below 80%\nif (passRate < 80) {\n  alerts.push(`⚠️ **Low pass rate**: ${passRate}% (threshold: 80%)`);\n}\n\n// Alert if more than 30% of runs take >7 minutes\nconst totalRuns = parseInt('${{ steps.metrics.outputs.total_runs }}');\nconst slowRunPercentage = totalRuns > 0 ? (slowRuns / totalRuns) * 100 : 0;\nif (slowRunPercentage > 30) {\n  alerts.push(`⚠️ **High slow run rate**: ${slowRuns}/${totalRuns} runs (${slowRunPercentage.toFixed(1)}%) took >7 minutes`);\n}\n\n// Alert if average duration is >10 minutes\nif (avgDuration > 10) {\n  alerts.push(`⚠️ **High average duration**: ${avgDuration} minutes (threshold: 10 min)`);\n}\n\nif (alerts.length > 0) {\n  const alertSummary = `\n  ## ⚠️ CI Performance Alerts\n  \n  ${alerts.map(a => `- ${a}`).join('\\n')}\n  \n  **Action Required**: Review recent CI runs and consider:\n  - Investigating slow jobs\n  - Checking for resource contention\n  - Reviewing timeout settings\n  - Looking for flaky tests\n  `;\n  \n  await core.summary\n    .addRaw(alertSummary)\n    .write();\n  \n  console.log(alertSummary);\n  \n  // Set output for potential notifications\n  core.setOutput('has_alerts', 'true');\n  core.setOutput('alert_message', alertSummary);\n} else {\n  console.log('✅ No performance alerts - CI is running healthy');\n  core.setOutput('has_alerts', 'false');\n}\n"
+  collect-job-metrics:
+    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    if: github.event.workflow_run.conclusion != 'skipped' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Collect individual job metrics
+        uses: actions/github-script@v9
+        with:
+          script: "const owner = context.repo.owner;\nconst repo = context.repo.repo;\n\n// Get the most recent CI run\nconst { data: runs } = await github.rest.actions.listWorkflowRuns({\n  owner,\n  repo,\n  workflow_id: 'ci.yml',\n  per_page: 1,\n  status: 'completed'\n});\n\nif (runs.workflow_runs.length === 0) {\n  console.log('No completed runs found');\n  return;\n}\n\nconst latestRun = runs.workflow_runs[0];\n\n// Get jobs for this run\nconst { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({\n  owner,\n  repo,\n  run_id: latestRun.id\n});\n\n// Calculate job durations\nconst jobMetrics = jobs.jobs.map(job => {\n  const start = new Date(job.started_at);\n  const end = new Date(job.completed_at);\n  const duration = (end - start) / 1000 / 60; // minutes\n  \n  return {\n    name: job.name,\n    conclusion: job.conclusion,\n    duration: duration.toFixed(2),\n    is_slow: duration > 7\n  };\n});\n\n// Generate job summary\nconst jobSummary = `\n## Job Metrics (Run #${latestRun.run_number})\n\n| Job Name | Status | Duration (min) | Alert |\n|----------|--------|----------------|-------|\n${jobMetrics.map(j => \n  `| ${j.name} | ${j.conclusion} | ${j.duration} | ${j.is_slow ? '⚠️ Slow' : '✅'} |`\n).join('\\n')}\n\n**Slow jobs** (>7 min): ${jobMetrics.filter(j => j.is_slow).length}\n`;\n\nawait core.summary\n  .addRaw(jobSummary)\n  .write();\n\nconsole.log(jobSummary);\n\n// Alert on specific slow jobs\nconst slowJobs = jobMetrics.filter(j => j.is_slow);\nif (slowJobs.length > 0) {\n  console.log('\\n⚠️ Slow jobs detected:');\n  slowJobs.forEach(j => {\n    console.log(`  - ${j.name}: ${j.duration} minutes`);\n  });\n}\n"
