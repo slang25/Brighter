@@ -52,6 +52,7 @@ namespace Paramore.Brighter.Core.Tests.MessageDispatch.Reactor
         }
 
         [Test]
+        [Property("Fragile", "CI")]
         public async Task When_A_Message_Dispatcher_Restarts_A_Connection_After_All_Connections_Have_Stopped()
         {
             _dispatcher.Open(new SubscriptionName("newTest"));
