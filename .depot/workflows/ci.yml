@@ -69,9 +69,9 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL']);
       - name: Core Tests
         run: |
-          dotnet test --project tests/Paramore.Brighter.Core.Tests/Paramore.Brighter.Core.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project tests/Paramore.Brighter.Extensions.Tests/Paramore.Brighter.Extensions.Tests.csproj -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project tests/Paramore.Brighter.Transforms.Adaptors.Tests/Paramore.Brighter.Transforms.Adaptors.Tests.csproj -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 15m --hangdump-type Mini
+          dotnet test --project tests/Paramore.Brighter.Core.Tests/Paramore.Brighter.Core.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project tests/Paramore.Brighter.Extensions.Tests/Paramore.Brighter.Extensions.Tests.csproj -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project tests/Paramore.Brighter.Transforms.Adaptors.Tests/Paramore.Brighter.Transforms.Adaptors.Tests.csproj -c Release --no-restore --no-build --verbosity d --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -113,10 +113,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: In Memory Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.InMemory.Tests/Paramore.Brighter.InMemory.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.InMemory.Tests/Paramore.Brighter.InMemory.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -136,10 +140,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Hangfire Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Hangfire.Tests/Paramore.Brighter.Hangfire.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Hangfire.Tests/Paramore.Brighter.Hangfire.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -159,10 +167,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Quartz Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Quartz.Tests/Paramore.Brighter.Quartz.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Quartz.Tests/Paramore.Brighter.Quartz.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -182,10 +194,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: TickerQ Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.TickerQ.Tests/Paramore.Brighter.TickerQ.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.TickerQ.Tests/Paramore.Brighter.TickerQ.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -214,10 +230,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Redis Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Redis.Tests/Paramore.Brighter.Redis.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Redis.Tests/Paramore.Brighter.Redis.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -243,10 +263,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: MQTT Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.MQTT.Tests/Paramore.Brighter.MQTT.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.MQTT.Tests/Paramore.Brighter.MQTT.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -274,12 +298,16 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: RMQ Async Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.RMQ.Async.Tests/Paramore.Brighter.RMQ.Async.Tests.csproj --treenode-filter "/*/*/*/*[(Fragile!=CI)&(Requires!=Docker-mTLS)]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.RMQ.Async.Tests/Paramore.Brighter.RMQ.Async.Tests.csproj --treenode-filter "/*/*/*/*[(Fragile!=CI)&(Requires!=Docker-mTLS)]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: RMQ Sync Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.RMQ.Sync.Tests/Paramore.Brighter.RMQ.Sync.Tests.csproj --treenode-filter "/*/*/*/*[(Fragile!=CI)&(Requires!=Docker-mTLS)]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.RMQ.Sync.Tests/Paramore.Brighter.RMQ.Sync.Tests.csproj --treenode-filter "/*/*/*/*[(Fragile!=CI)&(Requires!=Docker-mTLS)]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -355,10 +383,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Kafka Transport Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Kafka.Tests/Paramore.Brighter.Kafka.Tests.csproj --treenode-filter "/*/*/*/*[(Category!=Confluent)&(Fragile!=CI)]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Kafka.Tests/Paramore.Brighter.Kafka.Tests.csproj --treenode-filter "/*/*/*/*[(Category!=Confluent)&(Fragile!=CI)]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -388,10 +420,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Postgres Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.PostgresSQL.Tests/Paramore.Brighter.PostgresSQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.PostgresSQL.Tests/Paramore.Brighter.PostgresSQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -419,10 +455,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: MSSQL Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.MSSQL.Tests/Paramore.Brighter.MSSQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.MSSQL.Tests/Paramore.Brighter.MSSQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -451,8 +491,12 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Verify MariaDB connection
         env:
           PORT: ${{ job.services.mariadb.ports[3306] }}
@@ -461,7 +505,7 @@ jobs:
             sleep 1
           done
       - name: MySQL Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.MySQL.Tests/Paramore.Brighter.MySQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.MySQL.Tests/Paramore.Brighter.MySQL.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -486,12 +530,16 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: DynamoDB Tests
         run: |
-          dotnet test --project ./tests/Paramore.Brighter.DynamoDB.Tests/Paramore.Brighter.DynamoDB.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project ./tests/Paramore.Brighter.DynamoDB.V4.Tests/Paramore.Brighter.DynamoDB.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.DynamoDB.Tests/Paramore.Brighter.DynamoDB.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.DynamoDB.V4.Tests/Paramore.Brighter.DynamoDB.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -534,8 +582,8 @@ jobs:
             Linux-nuget-
       - name: AWS Tests
         run: |
-          dotnet test --project ./tests/Paramore.Brighter.AWS.Tests/Paramore.Brighter.AWS.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project ./tests/Paramore.Brighter.AWS.V4.Tests/Paramore.Brighter.AWS.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWS.Tests/Paramore.Brighter.AWS.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWS.V4.Tests/Paramore.Brighter.AWS.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -563,8 +611,12 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -573,8 +625,8 @@ jobs:
           aws-region: eu-west-1
       - name: AWS SNS, SQS and S3 Tests
         run: |
-          dotnet test --project ./tests/Paramore.Brighter.AWS.Tests/Paramore.Brighter.AWS.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project ./tests/Paramore.Brighter.AWS.V4.Tests/Paramore.Brighter.AWS.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWS.Tests/Paramore.Brighter.AWS.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWS.V4.Tests/Paramore.Brighter.AWS.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -608,8 +660,12 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -618,8 +674,8 @@ jobs:
           aws-region: eu-west-1
       - name: Scheduler Tests
         run: |
-          dotnet test --project ./tests/Paramore.Brighter.AWSScheduler.Tests/Paramore.Brighter.AWSScheduler.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
-          dotnet test --project ./tests/Paramore.Brighter.AWSScheduler.V4.Tests/Paramore.Brighter.AWSScheduler.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWSScheduler.Tests/Paramore.Brighter.AWSScheduler.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
+          dotnet test --project ./tests/Paramore.Brighter.AWSScheduler.V4.Tests/Paramore.Brighter.AWSScheduler.V4.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -645,10 +701,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Sqlite Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Sqlite.Tests/Paramore.Brighter.Sqlite.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Sqlite.Tests/Paramore.Brighter.Sqlite.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -673,10 +733,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: Azure Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.AzureServiceBus.Tests/Paramore.Brighter.AzureServiceBus.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.AzureServiceBus.Tests/Paramore.Brighter.AzureServiceBus.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -707,10 +771,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: MongoDB Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.MongoDb.Tests/Paramore.Brighter.MongoDb.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.MongoDb.Tests/Paramore.Brighter.MongoDb.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -745,10 +813,14 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
-      - name: Install dependencies
-        run: dotnet restore
+      - uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/Directory.Packages.props') }}
+          restore-keys: |
+            Linux-nuget-
       - name: GCP Tests
-        run: dotnet test --project ./tests/Paramore.Brighter.Gcp.Tests/Paramore.Brighter.Gcp.Tests.csproj --treenode-filter "/*/*/*/*[(Category!=Spanner)&(Fragile!=CI)]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+        run: dotnet test --project ./tests/Paramore.Brighter.Gcp.Tests/Paramore.Brighter.Gcp.Tests.csproj --treenode-filter "/*/*/*/*[(Category!=Spanner)&(Fragile!=CI)]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
       - name: Upload hang dumps
         if: always()
         uses: actions/upload-artifact@v7
@@ -819,4 +891,4 @@ jobs:
 #        run: dotnet restore
 #        
 #      - name: RocketMQ Tests
-#        run: dotnet test --project ./tests/Paramore.Brighter.RocketMQ.Tests/Paramore.Brighter.RocketMQ.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 15m --hangdump-type Mini
+#        run: dotnet test --project ./tests/Paramore.Brighter.RocketMQ.Tests/Paramore.Brighter.RocketMQ.Tests.csproj --treenode-filter "/*/*/*/*[Fragile!=CI]" --configuration Release --hangdump --hangdump-timeout 5m --hangdump-type Mini
