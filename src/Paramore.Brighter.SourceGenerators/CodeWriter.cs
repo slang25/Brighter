@@ -35,6 +35,10 @@ internal sealed class CodeWriter : IndentedTextWriter
 {
     public CodeWriter(StringWriter writer, int baseIndent = 0) : base(writer)
     {
+        // IndentedTextWriter defaults NewLine to Environment.NewLine, which would make the emitted
+        // source — and therefore the generated file's hash — depend on the build machine's OS.
+        // Pin it so a given model always produces byte-identical output.
+        NewLine = "\n";
         Indent = baseIndent;
     }
 

@@ -44,17 +44,15 @@ public class RegistrationWriterTests
     }
 
     [Fact]
-    public void AlwaysEmitsFrameworkHandlerRegistration()
+    public void DoesNotReRegisterFrameworkPipelineHandlers()
     {
-        // AutoFromAssemblies registers Brighter's own pipeline handlers ([UsePolicy],
-        // [RequestLogging], [Fallback], [Timeout]...) by scanning the framework assembly; the
-        // generated method must call EnsureFrameworkHandlersRegistered for the same effect —
-        // even when nothing was discovered, matching the scanning path's behaviour.
+        // Brighter's own pipeline handlers ([UsePolicy], [RequestLogging], [Fallback], [Timeout]...)
+        // are registered by BrighterHandlerBuilder before the caller ever holds an IBrighterBuilder
+        // (see FrameworkPipelineHandlerRegistrationTests), so emitting a call to do it again would
+        // just re-run a reflection sweep of the core assembly at every startup.
         var output = RegistrationWriter.Write(EmptyModel());
 
-        Assert.Contains(
-            "global::Paramore.Brighter.Extensions.DependencyInjection.BrighterBuilderExtensions.EnsureFrameworkHandlersRegistered(builder);",
-            output);
+        Assert.DoesNotContain("EnsureFrameworkHandlersRegistered", output);
     }
 
     [Fact]
@@ -176,7 +174,9 @@ public class RegistrationWriterTests
         var output = RegistrationWriter.Write(model);
 
         Assert.DoesNotContain("namespace ", output);
-        Assert.Contains("public static partial class Registrations", output);
+        // No namespace wrapper means no enclosing block, so the class starts at column 0 — an
+        // indented type declaration with nothing to be indented inside of just reads as a bug.
+        Assert.Contains("\npublic static partial class Registrations\n", output);
     }
 
     [Fact]

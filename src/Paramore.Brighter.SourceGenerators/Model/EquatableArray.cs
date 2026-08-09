@@ -38,6 +38,7 @@ internal sealed class EquatableArray<T> : IEquatable<EquatableArray<T>>, IReadOn
     public static readonly EquatableArray<T> Empty = new(Array.Empty<T>());
 
     private readonly T[] _items;
+    private int _hashCode;
 
     public EquatableArray(IEnumerable<T> items) => _items = items.ToArray();
 
@@ -60,15 +61,27 @@ internal sealed class EquatableArray<T> : IEquatable<EquatableArray<T>>, IReadOn
 
     public override bool Equals(object? obj) => obj is EquatableArray<T> other && Equals(other);
 
+    /// <summary>
+    /// Hashes every element, so it is cached after the first call: the incremental pipeline hashes
+    /// compilation-wide arrays repeatedly while comparing cache keys, and the contents are immutable
+    /// once constructed. Zero is the "not computed yet" sentinel, so a fold that happens to land on
+    /// zero is stored as one — a collision with an unrelated array, not a correctness problem, since
+    /// equality is decided by <see cref="Equals(EquatableArray{T}?)"/>. Deliberately not
+    /// thread-guarded: a race recomputes the same value.
+    /// </summary>
     public override int GetHashCode()
     {
+        if (_hashCode != 0)
+            return _hashCode;
+
         unchecked
         {
             var comparer = EqualityComparer<T>.Default;
             var hash = 17;
             foreach (var item in _items)
                 hash = hash * 31 + (item is null ? 0 : comparer.GetHashCode(item));
-            return hash;
+            _hashCode = hash == 0 ? 1 : hash;
+            return _hashCode;
         }
     }
 

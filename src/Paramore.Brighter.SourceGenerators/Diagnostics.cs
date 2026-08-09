@@ -99,15 +99,24 @@ internal static class Diagnostics
         "Request '{0}' has {1} registered handlers ({2}); only an event may have more than one handler, so this fails when the request is sent — exclude the unwanted handlers with [ExcludeFromBrighterRegistration], or derive the request from Event if several handlers are intended",
         "Brighter", DiagnosticSeverity.Warning, isEnabledByDefault: true);
 
+    // Error, not warning: a typo'd property otherwise leaves a green build that registers nothing —
+    // the silent-miss class this generator exists to kill, and the same reasoning that makes the
+    // auto path refuse to emit an empty AddFromThisAssembly.
     public static readonly DiagnosticDescriptor InvalidAutoRegistrationValue = new(
         "BRGEN013",
         "BrighterAutoRegistration is not a valid boolean",
-        "The BrighterAutoRegistration property is set to '{0}', which is not 'true' or 'false', so auto-registration was treated as disabled; use <BrighterAutoRegistration>true</BrighterAutoRegistration> or <BrighterAutoRegistration>false</BrighterAutoRegistration>",
-        "Brighter", DiagnosticSeverity.Warning, isEnabledByDefault: true);
+        "The BrighterAutoRegistration property is set to '{0}', which is not 'true' or 'false', so no registrations were generated; use <BrighterAutoRegistration>true</BrighterAutoRegistration> or <BrighterAutoRegistration>false</BrighterAutoRegistration>",
+        "Brighter", DiagnosticSeverity.Error, isEnabledByDefault: true);
 
     public static readonly DiagnosticDescriptor AutoRegistrationNameTaken = new(
         "BRGEN014",
         "The auto-registration class name is already declared in this compilation",
         "This compilation already declares Paramore.Brighter.Extensions.DependencyInjection.BrighterAssemblyRegistrations, so auto-registration was not generated; rename that type, or set <BrighterAutoRegistration>false</BrighterAutoRegistration> and register through a [BrighterRegistrations] holder",
+        "Brighter", DiagnosticSeverity.Warning, isEnabledByDefault: true);
+
+    public static readonly DiagnosticDescriptor NonPublicHandlerIgnored = new(
+        "BRGEN015",
+        "Non-public handlers are not registered",
+        "Handler '{0}' is not public, so it was not registered; Brighter only supports public handler types — its own pipeline validation reports a non-public handler as an error, and the assembly-scanning paths skip them too — so make the class public, or mark it with [ExcludeFromBrighterRegistration] to say the omission is intended",
         "Brighter", DiagnosticSeverity.Warning, isEnabledByDefault: true);
 }

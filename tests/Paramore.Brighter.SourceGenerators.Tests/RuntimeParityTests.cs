@@ -76,14 +76,51 @@ public class RuntimeParityTests
         }
         """;
 
-    private static readonly Lazy<Assembly> s_fixture = new(CompileFixture);
+    /// <summary>
+    /// A second fixture for the case that would otherwise have gone untested: handler visibility.
+    /// The reflection scanner filters handlers to <c>IsPublic || IsNestedPublic</c>, so the generator
+    /// has to as well — registering an <c>internal</c> test double the scanner skipped would turn a
+    /// working <c>Send</c> into "More than one handler was found" purely by switching mechanisms,
+    /// and core's own pipeline validation rejects a non-public handler outright. Kept out of
+    /// <see cref="FixtureSource"/> so the fixture there stays a straightforward one.
+    /// </summary>
+    private const string VisibilityFixtureSource = """
+        using Paramore.Brighter;
+        using Paramore.Brighter.Extensions.DependencyInjection;
+
+        namespace VisibilityFixture;
+
+        public class PublicEvent : Event
+        {
+            public PublicEvent() : base(System.Guid.NewGuid()) { }
+        }
+
+        public class PublicEventHandler : RequestHandler<PublicEvent>
+        {
+        }
+
+        internal class InternalEventHandler : RequestHandler<PublicEvent>
+        {
+        }
+
+        public static partial class Registrations
+        {
+            [BrighterRegistrations]
+            public static partial IBrighterBuilder AddFromThisAssembly(this IBrighterBuilder builder);
+        }
+        """;
+
+    private static readonly Lazy<Assembly> s_fixture = new(() => Compile("BrighterParityFixture", FixtureSource));
+
+    private static readonly Lazy<Assembly> s_visibilityFixture =
+        new(() => Compile("BrighterVisibilityFixture", VisibilityFixtureSource));
 
     /// <summary>
-    /// Compile the fixture with the generator applied and load the result. References come from
+    /// Compile a fixture with the generator applied and load the result. References come from
     /// the trusted platform assemblies, which for a framework-dependent test app include both the
     /// runtime and everything in the test's output directory (the Brighter assemblies included).
     /// </summary>
-    private static Assembly CompileFixture()
+    private static Assembly Compile(string assemblyName, string source)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
             .Split(Path.PathSeparator)
@@ -92,8 +129,8 @@ public class RuntimeParityTests
             .ToArray();
 
         var compilation = CSharpCompilation.Create(
-            "BrighterParityFixture",
-            new[] { CSharpSyntaxTree.ParseText(FixtureSource) },
+            assemblyName,
+            new[] { CSharpSyntaxTree.ParseText(source) },
             references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
@@ -108,12 +145,14 @@ public class RuntimeParityTests
     }
 
     /// <summary>Run the generated registration method against a fresh ServiceCollection.</summary>
-    private static IServiceCollection RunGeneratedPath()
+    private static IServiceCollection RunGeneratedPath() => RunGeneratedPath(s_fixture.Value, "ParityFixture.Registrations");
+
+    private static IServiceCollection RunGeneratedPath(Assembly fixture, string holderTypeName)
     {
         var services = new ServiceCollection();
         var builder = services.AddBrighter();
 
-        var registrations = s_fixture.Value.GetType("ParityFixture.Registrations")!;
+        var registrations = fixture.GetType(holderTypeName)!;
         var method = registrations.GetMethod("AddFromThisAssembly", BindingFlags.Public | BindingFlags.Static)!;
         method.Invoke(null, new object[] { builder });
 
@@ -125,12 +164,14 @@ public class RuntimeParityTests
     /// AutoFromAssemblies does, minus its AppDomain sweep (which would be racy under a test
     /// runner that has other assemblies loaded).
     /// </summary>
-    private static IServiceCollection RunScanningPath()
+    private static IServiceCollection RunScanningPath() => RunScanningPath(s_fixture.Value);
+
+    private static IServiceCollection RunScanningPath(Assembly fixture)
     {
         var services = new ServiceCollection();
         var builder = services.AddBrighter();
 
-        var assemblies = new[] { s_fixture.Value };
+        var assemblies = new[] { fixture };
         builder.MapperRegistryFromAssemblies(assemblies);
         builder.HandlersFromAssemblies(assemblies, null);
         builder.AsyncHandlersFromAssemblies(assemblies, null);
@@ -171,11 +212,49 @@ public class RuntimeParityTests
     }
 
     [Fact]
+    public void GeneratedRegistrations_CanBeCombinedWithAssemblyScanning()
+    {
+        // The union case: a composition root that calls both mechanisms over the same assembly. Both
+        // registries treat registration as a set, so the overlap collapses instead of throwing on the
+        // mappers or failing at dispatch with "More than one handler was found".
+        var services = new ServiceCollection();
+        var builder = services.AddBrighter();
+
+        var assemblies = new[] { s_fixture.Value };
+        builder.MapperRegistryFromAssemblies(assemblies);
+        builder.HandlersFromAssemblies(assemblies, null);
+        builder.AsyncHandlersFromAssemblies(assemblies, null);
+        builder.TransformsFromAssemblies(assemblies);
+
+        var registrations = s_fixture.Value.GetType("ParityFixture.Registrations")!;
+        var method = registrations.GetMethod("AddFromThisAssembly", BindingFlags.Public | BindingFlags.Static)!;
+        method.Invoke(null, new object[] { builder });
+
+        Assert.Equal(HandlersByRequestType(RunScanningPath()), HandlersByRequestType(services));
+    }
+
+    [Fact]
+    public void GeneratedRegistrations_SkipNonPublicHandlers_AsAssemblyScanningDoes()
+    {
+        // An internal test double alongside the real handler is the migration hazard: if the
+        // generator registered it and the scanner didn't, an assembly that works today under
+        // AutoFromAssemblies would start failing Send with "More than one handler was found" the
+        // moment it switched. The all-public fixture above cannot see this, which is why the
+        // divergence went unnoticed.
+        var generated = HandlersByRequestType(RunGeneratedPath(s_visibilityFixture.Value, "VisibilityFixture.Registrations"));
+        var scanned = HandlersByRequestType(RunScanningPath(s_visibilityFixture.Value));
+
+        Assert.Contains("VisibilityFixture.PublicEvent -> VisibilityFixture.PublicEventHandler", scanned);
+        Assert.Equal(scanned, generated);
+    }
+
+    [Fact]
     public void DuplicateMapperForSameRequestType_Throws()
     {
         // Pins the duplicate-registration behaviour the generated `r.Add(typeof(X), ...)` calls
-        // inherit: a second mapper for the same request type throws rather than last-write-wins.
-        // The scanning path funnels through the same Add, so the two paths agree here too.
+        // inherit: a *different* mapper for a request type that already has one is a genuine
+        // conflict and throws. An exact re-add of the same pair is a no-op — see
+        // DuplicateMapperRegistrationTests — which is what lets the two mechanisms be combined.
         var builder = new ServiceCollectionMessageMapperRegistryBuilder(new ServiceCollection());
         builder.Add(typeof(PinnedEvent), typeof(PinnedMapperA));
 

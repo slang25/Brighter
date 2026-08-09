@@ -249,6 +249,45 @@ public class AutoRegistrationTests
     }
 
     [Fact]
+    public void WithTwoRegistrationHolders_ReportsBRGEN012Once()
+    {
+        // Duplicate handlers are a property of the compilation, not of a registration method: every
+        // holder is emitted from the same discovery snapshot, so reporting per method would repeat
+        // the identical warning once per holder and make the count read like a count of problems.
+        const string source = """
+            using Paramore.Brighter;
+            using Paramore.Brighter.Extensions.DependencyInjection;
+
+            namespace App;
+
+            public class GreetingCommand : Command
+            {
+                public GreetingCommand() : base(System.Guid.NewGuid()) { }
+            }
+
+            public class GreetingHandler : RequestHandler<GreetingCommand> { }
+            public class RivalGreetingHandler : RequestHandler<GreetingCommand> { }
+
+            public static partial class FirstRegistrations
+            {
+                [BrighterRegistrations]
+                public static partial IBrighterBuilder AddFirst(this IBrighterBuilder builder);
+            }
+
+            public static partial class SecondRegistrations
+            {
+                [BrighterRegistrations]
+                public static partial IBrighterBuilder AddSecond(this IBrighterBuilder builder);
+            }
+            """;
+
+        var single = Run(source, "false").Results.Single();
+
+        Assert.Equal(2, single.GeneratedSources.Length);
+        Assert.Single(single.Diagnostics, d => d.Id == "BRGEN012");
+    }
+
+    [Fact]
     public void PropertyTrue_WithTwoHandlersForABareRequest_ReportsBRGEN012()
     {
         // A request that implements IRequest directly is neither command nor event, but Send still

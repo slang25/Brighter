@@ -1,7 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!--
+      Single-targeted netstandard2.0, and packed directly from $(OutputPath) below rather than
+      through the separate `.Package` project + TargetsForTfmSpecificContentInPackage pattern that
+      Paramore.Brighter.Analyzer.Package uses. Both deviations are deliberate: a Roslyn component
+      must be exactly netstandard2.0 (the compiler will not load anything else), and switching to
+      the plural $(TargetFrameworks) would make this a cross-targeting build whose outer-build
+      $(OutputPath) has no TFM folder, breaking the direct pack. This is the shape the Roslyn SDK
+      documents for source generators.
+    -->
     <TargetFramework>netstandard2.0</TargetFramework>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
     <Description>Source generators for Brighter — emits handler/mapper/transform registrations at compile time so consumers can avoid AutoFromAssemblies reflection scanning.</Description>
     <PackageTags>SourceGenerator;Brighter;Paramore.Brighter</PackageTags>
     <IsPackable>true</IsPackable>

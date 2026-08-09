@@ -94,13 +94,18 @@ internal sealed record RegistrationModel(
         || Transforms.Count > 0;
 
     /// <summary>
-    /// Non-event requests this model registers more than one handler for, as (request, handler
+    /// Non-event requests the compilation declares more than one handler for, as (request, handler
     /// names) pairs. Only an event is dispatched to several handlers; everything else goes through
     /// <c>Send</c>, which insists on exactly one — so this is always a mistake, but it is only
     /// detectable at dispatch time today (see the reflection scanner's identical behaviour), which
     /// is precisely the class of failure this generator exists to move earlier.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Computed over the discovered entries rather than a built model, because the answer depends
+    /// only on the compilation: every registration method in an assembly is emitted from the same
+    /// discovery snapshot, so asking per method would report the same duplicate once per method.
+    /// </para>
     /// <para>
     /// Sync and async handlers are counted separately, because <c>Send</c> and <c>SendAsync</c>
     /// resolve them independently: one sync and one async handler for the same request is a normal,
@@ -112,18 +117,20 @@ internal sealed record RegistrationModel(
     /// at composition time, where the registrations meet.
     /// </para>
     /// </remarks>
-    public IEnumerable<(string RequestType, IReadOnlyList<string> HandlerTypes)> DuplicateHandlers() =>
-        DuplicatesIn(Handlers).Concat(DuplicatesIn(AsyncHandlers));
+    public static IEnumerable<(string RequestType, IReadOnlyList<string> HandlerTypes)> DuplicateHandlers(
+        EquatableArray<DiscoveredEntry> discovered) =>
+        DuplicatesIn(discovered, DiscoveredKind.SyncHandler)
+            .Concat(DuplicatesIn(discovered, DiscoveredKind.AsyncHandler));
 
     private static IEnumerable<(string RequestType, IReadOnlyList<string> HandlerTypes)> DuplicatesIn(
-        EquatableArray<HandlerEntry> handlers) =>
-        handlers
-            .Where(static h => h is { IsOpenGeneric: false, RequestAllowsManyHandlers: false })
-            .GroupBy(static h => h.RequestTypeFullyQualified)
-            .Where(static g => g.Select(static h => h.HandlerTypeFullyQualified).Distinct().Count() > 1)
+        EquatableArray<DiscoveredEntry> discovered, DiscoveredKind kind) =>
+        discovered
+            .Where(e => e.Kind == kind && e is { IsOpenGeneric: false, RequestAllowsManyHandlers: false })
+            .GroupBy(static e => e.RequestTypeFullyQualified)
+            .Where(static g => g.Select(static e => e.TypeFullyQualified).Distinct().Count() > 1)
             .Select(static g => (
                 g.Key,
-                (IReadOnlyList<string>)g.Select(static h => h.HandlerTypeFullyQualified).Distinct().OrderBy(static n => n, System.StringComparer.Ordinal).ToList()));
+                (IReadOnlyList<string>)g.Select(static e => e.TypeFullyQualified).Distinct().OrderBy(static n => n, System.StringComparer.Ordinal).ToList()));
 }
 
 /// <summary>

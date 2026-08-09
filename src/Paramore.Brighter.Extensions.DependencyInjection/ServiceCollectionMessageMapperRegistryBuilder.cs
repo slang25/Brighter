@@ -73,39 +73,55 @@ namespace Paramore.Brighter.Extensions.DependencyInjection
         /// <summary>
         /// Add a mapper to the collection
         /// </summary>
+        /// <remarks>
+        /// Registering the same (message type, mapper type) pair more than once is a no-op:
+        /// registration is a set, not a list. Two mechanisms can legitimately both cover a mapper —
+        /// <c>AutoFromAssemblies()</c> alongside a source-generated registration method, or a
+        /// generated method called from two composition paths — and the caller means "register the
+        /// union". A <em>different</em> mapper for a message type that already has one is still a
+        /// conflict and still throws.
+        /// </remarks>
         /// <param name="message">The type of message to map</param>
         /// <param name="mapper">The type of the mapper</param>
         public void Add(Type message, Type mapper)
         {
             serviceCollection.TryAdd(new ServiceDescriptor(mapper, mapper, ServiceLifetime.Transient));
-            bool canAddMapper = !Mappers.ContainsKey(message);
-            if (canAddMapper)
-                Mappers.Add(message, mapper);
-            else
+            if (!Mappers.TryGetValue(message, out var conflictingMapper))
             {
-                var conflictingMapper = Mappers[message];
-                throw new ArgumentException(
-                    $"A mapper for message type {message.FullName} has already been registered. Mappers {conflictingMapper.FullName} and {mapper.FullName} are in conflict");
+                Mappers.Add(message, mapper);
+                return;
             }
+
+            if (conflictingMapper == mapper)
+                return;
+
+            throw new ArgumentException(
+                $"A mapper for message type {message.FullName} has already been registered. Mappers {conflictingMapper.FullName} and {mapper.FullName} are in conflict");
         }
 
         /// <summary>
         /// Add a mapper to the collection
         /// </summary>
+        /// <remarks>
+        /// Registering the same (message type, mapper type) pair more than once is a no-op — see
+        /// <see cref="Add"/> for why.
+        /// </remarks>
         /// <param name="message">The type of message to map</param>
         /// <param name="mapper">The type of the mapper</param>
         public void AddAsync(Type message, Type mapper)
         {
             serviceCollection.TryAdd(new ServiceDescriptor(mapper, mapper, ServiceLifetime.Transient));
-            bool canAddAsyncMapper = !AsyncMappers.ContainsKey(message);
-            if (canAddAsyncMapper)
-                AsyncMappers.Add(message, mapper);
-            else
+            if (!AsyncMappers.TryGetValue(message, out var conflictingMapper))
             {
-                var conflictingMapper = AsyncMappers[message];
-                throw new ArgumentException(
-                    $"An async mapper for message type {message.FullName} has already been registered. Mappers {conflictingMapper.FullName} and {mapper.FullName} are in conflict");
+                AsyncMappers.Add(message, mapper);
+                return;
             }
+
+            if (conflictingMapper == mapper)
+                return;
+
+            throw new ArgumentException(
+                $"An async mapper for message type {message.FullName} has already been registered. Mappers {conflictingMapper.FullName} and {mapper.FullName} are in conflict");
         }
  
         /// <summary>

@@ -28,8 +28,11 @@ public class BrighterRegistrationsGeneratorTests
         };
 
     [Fact]
-    public async Task NoBrighterReference_GeneratesAttributesOnly()
+    public async Task NoBrighterReference_GeneratesNothing()
     {
+        // The marker attributes live in core Brighter rather than being emitted as post-init output,
+        // so a compilation that cannot see Brighter has nothing to attribute and the generator emits
+        // no files at all. An empty TestState.GeneratedSources asserts exactly that.
         var test = new CSharpSourceGeneratorTest<BrighterRegistrationsGenerator, DefaultVerifier>
         {
             ReferenceAssemblies = ReferenceAssemblies.Net.Net90,
@@ -38,7 +41,6 @@ public class BrighterRegistrationsGeneratorTests
                 Sources = { "// no user code" },
             },
         };
-        // Post-init output is still emitted; only the per-method registration is skipped.
 
         await test.RunAsync();
     }
@@ -318,12 +320,11 @@ public class BrighterRegistrationsGeneratorTests
     }
 
     [Fact]
-    public async Task ProtectedInternalNestedHandler_IsRegistered()
+    public async Task PublicNestedHandlerInInternalOuter_IsRegistered()
     {
-        // protected internal is (protected OR internal), so the generated holder — which lives in
-        // the same assembly — can name it. Treating it like private silently dropped a handler the
-        // user could see perfectly well from their own code. private protected cannot be named from
-        // an unrelated static class, so it stays out.
+        // Handlers are filtered on the type's own accessibility, exactly as the reflection scanner's
+        // `IsPublic || IsNestedPublic` does — so a public type nested in an internal one is in, and
+        // the generated holder (same assembly) can name it.
         const string userCode = """
             using Paramore.Brighter;
             using Paramore.Brighter.Extensions.DependencyInjection;
@@ -335,14 +336,9 @@ public class BrighterRegistrationsGeneratorTests
                 public GreetingCommand() : base(System.Guid.NewGuid()) { }
             }
 
-            public class Outer
+            internal class Outer
             {
-                protected internal class ProtectedInternalNested : RequestHandler<GreetingCommand>
-                {
-                    public override GreetingCommand Handle(GreetingCommand command) => base.Handle(command);
-                }
-
-                private protected class PrivateProtectedNested : RequestHandler<GreetingCommand>
+                public class PublicNested : RequestHandler<GreetingCommand>
                 {
                     public override GreetingCommand Handle(GreetingCommand command) => base.Handle(command);
                 }
@@ -360,10 +356,103 @@ public class BrighterRegistrationsGeneratorTests
         test.TestState.GeneratedSources.Add(Registration("""
             builder.Handlers(r =>
             {
-                r.Register<global::App.GreetingCommand, global::App.Outer.ProtectedInternalNested>();
+                r.Register<global::App.GreetingCommand, global::App.Outer.PublicNested>();
             });
             builder.MapperRegistry(r =>
             {
+            });
+            """));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task NonPublicHandler_IsNotRegistered_AndReportsBRGEN015()
+    {
+        // Core Brighter's own pipeline validation rejects a non-public handler as an *error*
+        // ("Brighter only supports public handler types"), and the scanner never registered one, so
+        // the generator must not either — otherwise switching mechanisms turns a working project
+        // into one that fails Send with "More than one handler was found". Warned about rather than
+        // dropped in silence, which is the whole point of the generator.
+        const string userCode = """
+            using Paramore.Brighter;
+            using Paramore.Brighter.Extensions.DependencyInjection;
+
+            namespace App;
+
+            public class GreetingCommand : Command
+            {
+                public GreetingCommand() : base(System.Guid.NewGuid()) { }
+            }
+
+            internal class InternalHandler : RequestHandler<GreetingCommand>
+            {
+                public override GreetingCommand Handle(GreetingCommand command) => base.Handle(command);
+            }
+
+            public class Outer
+            {
+                protected internal class ProtectedInternalNested : RequestHandler<GreetingCommand>
+                {
+                    public override GreetingCommand Handle(GreetingCommand command) => base.Handle(command);
+                }
+            }
+
+            public static partial class Registrations
+            {
+                [BrighterRegistrations]
+                public static partial IBrighterBuilder AddFromThisAssembly(this IBrighterBuilder builder);
+            }
+            """;
+
+        var test = MakeTest();
+        test.TestState.Sources.Add(userCode);
+        test.TestState.GeneratedSources.Add(Registration("""
+            builder.MapperRegistry(r =>
+            {
+            });
+            """));
+        test.TestState.ExpectedDiagnostics.Add(
+            DiagnosticResult.CompilerWarning("BRGEN015").WithSpan(11, 16, 11, 31).WithArguments("global::App.InternalHandler"));
+        test.TestState.ExpectedDiagnostics.Add(
+            DiagnosticResult.CompilerWarning("BRGEN015").WithSpan(18, 30, 18, 53).WithArguments("global::App.Outer.ProtectedInternalNested"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task NonPublicMapper_IsStillRegistered()
+    {
+        // The public-only rule is handler-specific: it comes from Brighter's handler pipeline
+        // validation, and the scanner applies no visibility filter to mappers or transforms.
+        const string userCode = """
+            using Paramore.Brighter;
+            using Paramore.Brighter.Extensions.DependencyInjection;
+
+            namespace App;
+
+            public class GreetingEvent : Event { public GreetingEvent() : base(System.Guid.NewGuid()) { } }
+
+            internal class InternalMapper : IAmAMessageMapper<GreetingEvent>
+            {
+                public IRequestContext? Context { get; set; }
+                public Message MapToMessage(GreetingEvent request, Publication publication) => new();
+                public GreetingEvent MapToRequest(Message message) => new();
+            }
+
+            public static partial class Registrations
+            {
+                [BrighterRegistrations]
+                public static partial IBrighterBuilder AddFromThisAssembly(this IBrighterBuilder builder);
+            }
+            """;
+
+        var test = MakeTest();
+        test.TestState.Sources.Add(userCode);
+        test.TestState.GeneratedSources.Add(Registration("""
+            builder.MapperRegistry(r =>
+            {
+                r.Add(typeof(global::App.GreetingEvent), typeof(global::App.InternalMapper));
             });
             """));
 
@@ -887,14 +976,16 @@ public class BrighterRegistrationsGeneratorTests
     private static string ExpectedRegistration(string body)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append(GeneratedSource.Header).Append('\n');
+        // Join the banner with '\n' rather than appending Header verbatim: a raw string literal keeps
+        // the checkout's line endings, so on a CRLF clone the literal is "\r\n"-delimited while the
+        // writer emits "\n" throughout (CodeWriter pins NewLine).
+        sb.Append(string.Join("\n", GeneratedSource.HeaderLines)).Append('\n');
         sb.Append('\n');
         sb.Append("namespace App\n{\n");
         sb.Append("    public static partial class Registrations\n    {\n");
         sb.Append("        ").Append(GeneratedSource.GeneratedCodeAttribute).Append('\n');
         sb.Append("        public static partial global::Paramore.Brighter.Extensions.DependencyInjection.IBrighterBuilder AddFromThisAssembly(this global::Paramore.Brighter.Extensions.DependencyInjection.IBrighterBuilder builder)\n");
         sb.Append("        {\n");
-        sb.Append("            global::Paramore.Brighter.Extensions.DependencyInjection.BrighterBuilderExtensions.EnsureFrameworkHandlersRegistered(builder);\n");
         if (!string.IsNullOrEmpty(body))
         {
             foreach (var line in body.Replace("\r\n", "\n").Split('\n'))

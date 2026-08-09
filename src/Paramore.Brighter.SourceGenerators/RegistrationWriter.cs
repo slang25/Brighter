@@ -55,12 +55,6 @@ internal static class RegistrationWriter
             code.WriteLine($"namespace {model.Target.Namespace}");
             code.StartBlock();
         }
-        else
-        {
-            // Preserve the historical layout: the registration class is indented one level even
-            // when there is no namespace wrapper to open a block.
-            code.Indent++;
-        }
 
         WriteContainingType(code, model);
 
@@ -81,11 +75,10 @@ internal static class RegistrationWriter
         code.WriteLine(MethodSignature(target));
         code.StartBlock();
 
-        // The assembly-scanning paths register Brighter's own pipeline handlers ([UsePolicy],
-        // [RequestLogging], [Fallback], [Timeout]...) by appending the framework assembly to the
-        // scan set; the generated method must do the same or those attributes fail at runtime.
-        code.WriteLine($"global::Paramore.Brighter.Extensions.DependencyInjection.BrighterBuilderExtensions.EnsureFrameworkHandlersRegistered({target.ParameterName});");
-
+        // Brighter's own pipeline handlers ([UsePolicy], [RequestLogging], [Fallback], [Timeout]...)
+        // are not emitted here: every route to an IBrighterBuilder runs through BrighterHandlerBuilder,
+        // which scans core Brighter for them before the caller ever sees the builder. See
+        // FrameworkPipelineHandlerRegistrationTests, which pins that.
         WriteHandlers(code, target.ParameterName, model.Handlers, isAsync: false);
         WriteHandlers(code, target.ParameterName, model.AsyncHandlers, isAsync: true);
         WriteMappers(code, target.ParameterName, model.Mappers, model.AsyncMappers);

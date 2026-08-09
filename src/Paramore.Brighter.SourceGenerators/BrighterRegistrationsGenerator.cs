@@ -24,6 +24,7 @@ THE SOFTWARE. */
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -135,6 +136,18 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(ToDiagnostic(info));
         });
 
+        // BRGEN012 is a property of the compilation's handlers, not of any one registration method:
+        // every method is emitted from the same discovery snapshot, so reporting it per method would
+        // repeat the same warning once per [BrighterRegistrations] holder. Report it here instead,
+        // gated the same way as the other discovery diagnostics.
+        context.RegisterSourceOutput(discovered.Combine(generatorActive), static (spc, pair) =>
+        {
+            var (entries, active) = pair;
+            if (!active)
+                return;
+            ReportDuplicateHandlers(spc, entries);
+        });
+
         var combined = methodCandidates.Combine(discovered)
             .WithTrackingName(TrackingNames.RegistrationInputs);
 
@@ -155,7 +168,6 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
             // leaving it unimplemented is a compile error (CS8795). The auto form has no such
             // obligation and is suppressed when empty — see RegisterAutoRegistration.
             var model = RegistrationModel.From(candidate.Method, entries);
-            ReportDuplicateHandlers(spc, model);
             spc.AddSource(model.Target.HintName, SourceText.From(RegistrationWriter.Write(model), Encoding.UTF8));
         });
 
@@ -252,7 +264,6 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     Diagnostics.AutoRegistrationCollision, Location.None, compilationFacts.CollidingAssembly));
 
-            ReportDuplicateHandlers(spc, model);
             spc.AddSource(model.Target.HintName, SourceText.From(RegistrationWriter.Write(model), Encoding.UTF8));
         });
     }
@@ -294,13 +305,13 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
     }
 
     /// <summary>
-    /// Reports BRGEN012 for every non-event request this model registers two or more handlers for.
-    /// The scanner has always allowed this and failed at dispatch; the generator can see it while
-    /// the build is still running.
+    /// Reports BRGEN012 for every non-event request the compilation declares two or more handlers
+    /// for. The scanner has always allowed this and failed at dispatch; the generator can see it
+    /// while the build is still running.
     /// </summary>
-    private static void ReportDuplicateHandlers(SourceProductionContext spc, RegistrationModel model)
+    private static void ReportDuplicateHandlers(SourceProductionContext spc, EquatableArray<DiscoveredEntry> discovered)
     {
-        foreach (var (requestType, handlerTypes) in model.DuplicateHandlers())
+        foreach (var (requestType, handlerTypes) in RegistrationModel.DuplicateHandlers(discovered))
         {
             spc.ReportDiagnostic(Diagnostic.Create(
                 Diagnostics.DuplicateHandler,
@@ -340,29 +351,20 @@ public sealed class BrighterRegistrationsGenerator : IIncrementalGenerator
     }
 
     private static Diagnostic ToDiagnostic(DiagnosticInfo info) => Diagnostic.Create(
-        DescriptorFor(info.Id),
+        s_descriptorsById[info.Id],
         info.Location?.ToLocation() ?? Location.None,
         info.Argument);
 
-    private static readonly Dictionary<string, DiagnosticDescriptor> s_descriptorsById = new()
-    {
-        [Diagnostics.MustBePartial.Id] = Diagnostics.MustBePartial,
-        [Diagnostics.MustBeStatic.Id] = Diagnostics.MustBeStatic,
-        [Diagnostics.WrongReturnType.Id] = Diagnostics.WrongReturnType,
-        [Diagnostics.WrongSignature.Id] = Diagnostics.WrongSignature,
-        [Diagnostics.GenericMapperOrTransformIgnored.Id] = Diagnostics.GenericMapperOrTransformIgnored,
-        [Diagnostics.NestedInOpenGeneric.Id] = Diagnostics.NestedInOpenGeneric,
-        [Diagnostics.UnsupportedContainingType.Id] = Diagnostics.UnsupportedContainingType,
-        [Diagnostics.BrighterNotReferenced.Id] = Diagnostics.BrighterNotReferenced,
-        [Diagnostics.AutoRegistrationBrighterNotReferenced.Id] = Diagnostics.AutoRegistrationBrighterNotReferenced,
-        [Diagnostics.AutoRegistrationCollision.Id] = Diagnostics.AutoRegistrationCollision,
-        [Diagnostics.DuplicateHandler.Id] = Diagnostics.DuplicateHandler,
-        [Diagnostics.AutoRegistrationNameTaken.Id] = Diagnostics.AutoRegistrationNameTaken,
-        [Diagnostics.InvalidAutoRegistrationValue.Id] = Diagnostics.InvalidAutoRegistrationValue,
-    };
-
-    private static DiagnosticDescriptor DescriptorFor(string id) =>
-        s_descriptorsById.TryGetValue(id, out var descriptor)
-            ? descriptor
-            : throw new System.InvalidOperationException($"Unknown Brighter diagnostic id '{id}' — DescriptorFor needs updating.");
+    /// <summary>
+    /// Every descriptor <see cref="Diagnostics"/> declares, keyed by id. Built by reflecting over the
+    /// class's fields rather than restated by hand: a hand-maintained list can fall out of step, and
+    /// the miss would surface as an exception thrown inside <c>RegisterSourceOutput</c> — which
+    /// Roslyn reports as CS8785 and which kills the consumer's build.
+    /// </summary>
+    private static readonly Dictionary<string, DiagnosticDescriptor> s_descriptorsById =
+        typeof(Diagnostics)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(static f => f.FieldType == typeof(DiagnosticDescriptor))
+            .Select(static f => (DiagnosticDescriptor)f.GetValue(null)!)
+            .ToDictionary(static d => d.Id);
 }

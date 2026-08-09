@@ -189,14 +189,16 @@ internal static class SemanticModelReader
 
         var seenTransform = false;
         var unsupportedGenericMapperOrTransform = false;
+        var nonPublicHandler = false;
 
         foreach (var iface in type.AllInterfaces)
         {
-            var (entry, isTransform, isUnsupported) = TryClassifyInterface(type, iface, markers);
+            var (entry, isTransform, isUnsupported, isNonPublicHandler) = TryClassifyInterface(type, iface, markers);
             if (entry is not null)
                 entries.Add(entry);
             seenTransform |= isTransform;
             unsupportedGenericMapperOrTransform |= isUnsupported;
+            nonPublicHandler |= isNonPublicHandler;
         }
 
         // seenTransform is only set on the non-generic branch, so it already implies !IsGenericType.
@@ -211,13 +213,21 @@ internal static class SemanticModelReader
                 location,
                 FullyQualified(type)));
         }
+
+        if (nonPublicHandler)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                Diagnostics.NonPublicHandlerIgnored.Id,
+                LocationInfo.From(type.Locations.FirstOrDefault()),
+                FullyQualified(type)));
+        }
     }
 
     private enum BrighterInterfaceKind { None, SyncHandler, AsyncHandler, Mapper, AsyncMapper, Transform }
 
     // Returns the discovered entry (if any) plus flags the caller folds into its running state, so
     // the per-interface classification stays a pure function of (type, iface) with no ref plumbing.
-    private static (DiscoveredEntry? Entry, bool IsTransform, bool IsUnsupportedGeneric) TryClassifyInterface(
+    private static (DiscoveredEntry? Entry, bool IsTransform, bool IsUnsupportedGeneric, bool IsNonPublicHandler) TryClassifyInterface(
         INamedTypeSymbol type,
         INamedTypeSymbol iface,
         MarkerSymbols markers)
@@ -225,19 +235,35 @@ internal static class SemanticModelReader
         switch (ClassifyInterface(iface, markers, out var requestType))
         {
             case BrighterInterfaceKind.Transform:
-                return type.IsGenericType ? (null, false, true) : (null, true, false);
+                return type.IsGenericType ? (null, false, true, false) : (null, true, false, false);
             case BrighterInterfaceKind.SyncHandler:
-                return (MakeHandlerEntry(DiscoveredKind.SyncHandler, type, requestType!, markers), false, false);
+                return HandlerClassification(DiscoveredKind.SyncHandler, type, requestType!, markers);
             case BrighterInterfaceKind.AsyncHandler:
-                return (MakeHandlerEntry(DiscoveredKind.AsyncHandler, type, requestType!, markers), false, false);
+                return HandlerClassification(DiscoveredKind.AsyncHandler, type, requestType!, markers);
             case BrighterInterfaceKind.Mapper:
                 return MapperClassification(DiscoveredKind.Mapper, type, requestType!);
             case BrighterInterfaceKind.AsyncMapper:
                 return MapperClassification(DiscoveredKind.AsyncMapper, type, requestType!);
             default:
-                return (null, false, false);
+                return (null, false, false, false);
         }
     }
+
+    /// <summary>
+    /// A handler must be declared <c>public</c>, which is more than "nameable from the generated
+    /// holder": core Brighter's own pipeline validation rejects a non-public handler outright
+    /// (<c>HandlerPipelineValidationRules.HandlerTypeVisibility</c>, severity Error — "Brighter only
+    /// supports public handler types"), and the reflection scanner filters to
+    /// <c>IsPublic || IsNestedPublic</c> for the same reason. Registering more than the scanner does
+    /// would mean a project that builds and runs today starts failing <c>Send</c> with "More than one
+    /// handler was found" purely by switching mechanisms. Reported as BRGEN015 rather than dropped in
+    /// silence. Mappers and transforms have no such rule and are not filtered.
+    /// </summary>
+    private static (DiscoveredEntry? Entry, bool IsTransform, bool IsUnsupportedGeneric, bool IsNonPublicHandler) HandlerClassification(
+        DiscoveredKind kind, INamedTypeSymbol type, ITypeSymbol requestType, MarkerSymbols markers) =>
+        type.DeclaredAccessibility == Accessibility.Public
+            ? (MakeHandlerEntry(kind, type, requestType, markers), false, false, false)
+            : (null, false, false, true);
 
     /// <summary>Classify a single interface the type implements as a Brighter role (or None).</summary>
     private static BrighterInterfaceKind ClassifyInterface(INamedTypeSymbol iface, MarkerSymbols markers, out ITypeSymbol? requestType)
@@ -287,11 +313,11 @@ internal static class SemanticModelReader
     private static bool AllowsManyHandlers(ITypeSymbol requestType, MarkerSymbols markers) =>
         markers.Event is null || requestType.AllInterfaces.Any(i => Same(i, markers.Event));
 
-    private static (DiscoveredEntry? Entry, bool IsTransform, bool IsUnsupportedGeneric) MapperClassification(
+    private static (DiscoveredEntry? Entry, bool IsTransform, bool IsUnsupportedGeneric, bool IsNonPublicHandler) MapperClassification(
         DiscoveredKind kind, INamedTypeSymbol type, ITypeSymbol requestType) =>
         type.IsGenericType
-            ? (null, false, true)
-            : (new DiscoveredEntry(kind, FullyQualified(requestType), FullyQualified(type), IsOpenGeneric: false), false, false);
+            ? (null, false, true, false)
+            : (new DiscoveredEntry(kind, FullyQualified(requestType), FullyQualified(type), IsOpenGeneric: false), false, false, false);
 
     private static bool IsClassifiable(INamedTypeSymbol type)
     {

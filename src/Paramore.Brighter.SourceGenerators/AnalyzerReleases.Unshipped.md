@@ -17,5 +17,6 @@ BRGEN009 | Brighter | Error | Brighter is not referenced
 BRGEN010 | Brighter | Warning | Auto-registration is enabled but Brighter is not fully referenced
 BRGEN011 | Brighter | Warning | Auto-registration collides with a registration class from another assembly
 BRGEN012 | Brighter | Warning | A non-event request has more than one registered handler
-BRGEN013 | Brighter | Warning | BrighterAutoRegistration is not a valid boolean
+BRGEN013 | Brighter | Error | BrighterAutoRegistration is not a valid boolean
 BRGEN014 | Brighter | Warning | The auto-registration class name is already declared in this compilation
+BRGEN015 | Brighter | Warning | Non-public handlers are not registered
