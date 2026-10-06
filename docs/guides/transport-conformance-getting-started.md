@@ -149,7 +149,7 @@ dotnet test ./tests/Paramore.Brighter.Redis.Tests/Paramore.Brighter.Redis.Tests.
 ```
 
 Substitute the transport: `docker-compose-kafka.yaml`, `-rmq.yaml`, `-mqtt.yaml`,
-`-postgres.yaml`, `-mssql.yaml`, `-rocketmq.yaml`, `-localstack.yaml`, `-gcp.yaml`. The
+`-postgres.yaml`, `-mssql.yaml`, `-rocketmq.yaml`, `-aws.yaml`, `-gcp.yaml`. The
 `Fragile!=CI` filter is not optional — without it you also pick up tests deliberately excluded from
 CI. RabbitMQ needs one more exclusion:
 
