@@ -518,11 +518,18 @@ jobs:
     timeout-minutes: 8
     needs: [build]
 
+    # Floci serves DynamoDB on 4566; the tests address it at localhost:8000, so map 8000 to it.
     services:
-      dynamo:
-        image: dwmkerr/dynamodb
-        ports: 
-          - 8000:8000
+      floci:
+        image: floci/floci:2.2.0
+        ports:
+          - 8000:4566
+        options: >-
+          --health-cmd "/usr/local/bin/healthcheck.sh"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 5s
 
     steps:
       - uses: actions/checkout@v7

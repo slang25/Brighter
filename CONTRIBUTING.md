@@ -465,7 +465,7 @@ If you're only working on a specific area, use the individual compose files:
 | PostgreSQL | `docker-compose-postgres.yaml` | Testing PostgreSQL outbox/inbox |
 | MSSQL | `docker-compose-mssql.yaml` | Testing MSSQL outbox/inbox |
 | MongoDB | `docker-compose-mongodb.yaml` | Testing MongoDB outbox/inbox |
-| DynamoDB | `docker-compose-dynamodb.yaml` | Testing DynamoDB outbox/inbox |
+| DynamoDB (Floci) | `docker-compose-dynamodb.yaml` | Testing DynamoDB outbox/inbox |
 | Redis | `docker-compose-redis.yaml` | Testing Redis messaging gateway |
 | MQTT | `docker-compose-mqtt.yaml` | Testing MQTT messaging gateway |
 | RocketMQ | `docker-compose-rocketmq.yaml` | Testing RocketMQ messaging gateway |
