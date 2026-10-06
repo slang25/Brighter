@@ -1,14 +1,16 @@
 version: '3.1'
 services:
-  dynamodb-local:
-    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
-    image: "amazon/dynamodb-local:latest"
-    container_name: dynamodb-local
+  floci:
+    # Floci serves DynamoDB on 4566; the sample addresses it at localhost:8000.
+    image: floci/floci:2.2.0
+    container_name: floci
+    environment:
+      - FLOCI_STORAGE_MODE=persistent
+      - FLOCI_STORAGE_PERSISTENT_PATH=/app/data
     ports:
-      - "8000:8000"
+      - "8000:4566"
     volumes:
-      - "./docker/dynamodb:/home/dynamodblocal/data"
-    working_dir: /home/dynamodblocal
+      - "./docker/floci:/app/data"
     
   rabbitmq:
     image: brightercommand/rabbitmq:4.2-management-delay
