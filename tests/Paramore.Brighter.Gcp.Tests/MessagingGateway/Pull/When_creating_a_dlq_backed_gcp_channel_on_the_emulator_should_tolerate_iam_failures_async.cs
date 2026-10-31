@@ -28,6 +28,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Google.Api.Gax;
+using Grpc.Core;
+using Grpc.Core.Interceptors;
+using Grpc.Net.Client;
 using Paramore.Brighter.Gcp.Tests.Helper;
 using Paramore.Brighter.Gcp.Tests.TestDoubles;
 using Paramore.Brighter.MessagingGateway.GcpPubSub;
@@ -149,8 +152,13 @@ public class DlqBackedGcpChannelIamToleranceAsyncTests
     }
 
     /// <summary>
-    /// Members set (C-11): no Resource Manager call is issued. GetIamPolicyAsync on the emulator
-    /// returns Unimplemented (tolerated). Exactly two Warnings are logged, one per helper.
+    /// Members set (C-11): no Resource Manager call is issued. GetIamPolicyAsync returns
+    /// Unimplemented (tolerated). Exactly two Warnings are logged, one per helper.
+    ///
+    /// Google's emulator answers GetIamPolicy with Unimplemented, but an emulator that implements
+    /// IAM (e.g. floci-gcp) answers it successfully, so the tolerance would never be exercised. The
+    /// test therefore injects Unimplemented on GetIamPolicy through <see cref="GcpFaultInjectingInterceptor"/>,
+    /// so it holds on either emulator.
     /// </summary>
     [Trait("Requires", "PubSubEmulator")]
     [Fact]
@@ -165,7 +173,8 @@ public class DlqBackedGcpChannelIamToleranceAsyncTests
         // C-11: members explicitly configured — no Resource Manager client is ever built
         const string member = "serviceAccount:test@brighter-test.iam.gserviceaccount.com";
 
-        var connection = CreateConnection();
+        var faults = new GcpFaultInjectingInterceptor(GetIamPolicyMethod) { FaultStatus = StatusCode.Unimplemented };
+        var connection = CreateConnectionWithIamFaults(faults);
         var channelFactory = new GcpPubSubChannelFactory(connection);
 
         var subscription = new GcpPubSubSubscription<MyCommand>(
@@ -189,12 +198,16 @@ public class DlqBackedGcpChannelIamToleranceAsyncTests
         try
         {
             using var logContext = TestCorrelator.CreateContext();
+            faults.Arm();
 
             // Act
             channel = await channelFactory.CreateAsyncChannelAsync(subscription);
 
             // Assert
             Assert.NotNull(channel);
+
+            // One injected GetIamPolicy failure per helper; also guards against the invoker being dropped
+            Assert.Equal(2, faults.FiredCount);
 
             var projectId = GatewayFactory.GetProjectId();
             var expectedDlqResource = $"projects/{projectId}/topics/{dlqTopicName.Value}";
@@ -222,9 +235,9 @@ public class DlqBackedGcpChannelIamToleranceAsyncTests
             // C-11 (members-set): failure is at GetIamPolicyAsync (no Resource Manager call issued)
             foreach (var p in new[] { dlqParsed, subParsed })
             {
-                // {Rpc}: GetIamPolicyAsync (emulator returns Unimplemented)
+                // {Rpc}: GetIamPolicyAsync (injected Unimplemented)
                 Assert.Equal("GetIamPolicyAsync", p.Rpc);
-                // {Status}: Unimplemented from the emulator
+                // {Status}: Unimplemented, as Google's emulator answers
                 Assert.Equal("Unimplemented", p.Status);
             }
 
@@ -241,6 +254,29 @@ public class DlqBackedGcpChannelIamToleranceAsyncTests
             await channelFactory.DeleteTopicAsync(subscription);
             await channelFactory.DeleteSubscriptionAsync(subscription);
         }
+    }
+
+    private const string GetIamPolicyMethod = "/google.iam.v1.IAMPolicy/GetIamPolicy";
+
+    /// <summary>
+    /// The IAM helpers call GetIamPolicy through the publisher client's <c>IAMPolicyClient</c>, which
+    /// <see cref="GcpMessagingGatewayConnection.TopicManagerConfiguration"/> builds. That builder is
+    /// wired to the fault-injecting invoker as ADR 0078 "How it is wired" describes:
+    /// <c>Credential = null</c>, <c>EmulatorDetection</c> left at <c>None</c> (setting it would
+    /// silently drop the invoker), and <c>CallInvoker</c> pointed at the same emulator.
+    /// </summary>
+    private static GcpMessagingGatewayConnection CreateConnectionWithIamFaults(GcpFaultInjectingInterceptor faults)
+    {
+        var emulatorHost = Environment.GetEnvironmentVariable("PUBSUB_EMULATOR_HOST")!;
+        var connection = CreateConnection();
+        connection.TopicManagerConfiguration = builder =>
+        {
+            builder.Credential = null;
+            builder.CallInvoker = GrpcChannel
+                .ForAddress("http://" + emulatorHost, new GrpcChannelOptions { Credentials = ChannelCredentials.Insecure })
+                .Intercept(faults);
+        };
+        return connection;
     }
 
     private static GcpMessagingGatewayConnection CreateConnection() =>
