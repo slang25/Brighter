@@ -73,11 +73,13 @@ services:
       timeout: 10s
       retries: 10
     
-  # Service to create the RocketMQ topic
+  # Service to create the RocketMQ topics; the topic list lives in docker/RocketMQ/create-topics.sh
   create-topic:
     image: apache/rocketmq:5.5.0 # Use the same RocketMQ image to get mqadmin tool
     platform: linux/amd64
-    command: > # Multi-line command to create the topic
+    volumes:
+      - ./docker/RocketMQ/create-topics.sh:/create-topics.sh:ro
+    command: > # Multi-line command to wait for the broker, then create the topics
       bash -c "
             echo 'Waiting for broker to be healthy...' &&
             until echo > /dev/tcp/broker/10911 2>/dev/null; do
@@ -89,139 +91,8 @@ services:
             until $$MQADMIN clusterList -n nameserver:9876 2>/dev/null | grep -q '^DefaultCluster'; do
               sleep 5
             done;
-            echo 'Broker is up. Creating multiple topics...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t bt_building_dispatch -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL && 
-            $$MQADMIN updateTopic -n nameserver:9876 -t bt_building_dispatch_async -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t bt_named_gateway_dispatch -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t bt_mc_cloudevents -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t bt_mc_cloudevents_async -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_source -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_target -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t orders -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t orders-dlq -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t orders-invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            echo 'Creating generated test topics...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_post_msg -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_multi_msg -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_multi_thread -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_activity -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_requeue -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_dlq -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_dlq_target -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_requeue_delay -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_delayed_msg -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_partition_key -c DefaultCluster -r 1 -w 1 -a +message.type=FIFO &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_post_msg -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_multi_msg -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_multi_thread -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_activity -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_requeue -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_dlq -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_dlq_target -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_requeue_delay -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_delayed_msg -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_partition_key -c DefaultCluster -r 1 -w 1 -a +message.type=FIFO &&
-
-            echo 'Creating conformance requeue-exhaustion topics (FR-23)...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_exhaust -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_exhaust_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_exhaust_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_exhaust -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_exhaust_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_exhaust_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            echo 'Creating generated delay / requeue / nack / reject topics...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_send_delayed_msg -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rq_redeliver -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rq_again -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rq_delay_again -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rq_zero -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rq_after -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_nack -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_nack2 -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_de -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_de_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_meta -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_meta_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_noch -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_fb -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_fb_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_inv -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_inv_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_inv_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_unk -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_unk_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_r_rej_unk_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_send_delayed_msg -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rq_redeliver -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rq_again -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rq_delay_again -c DefaultCluster -r 1 -w 1 -a +message.type=DELAY &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rq_zero -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rq_after -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_nack -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_nack2 -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_de -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_de_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_meta -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_meta_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_noch -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_fb -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_fb_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_inv -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_inv_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_inv_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_unk -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_unk_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t gen_p_rej_unk_Invalid -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            echo 'Creating measurement topics...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_measure_delivery_attempt -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            echo 'Creating hand-written test topics...' &&
-
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_rej_none_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_rej_none_r_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_rej_none_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_rej_none_p_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_stale_hc_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_stale_hc_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_m1_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_m1_r_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_m1_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_m1_p_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_first_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_first_r_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_first_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_budget_first_p_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_delivery_count_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_delivery_count_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_lease_lapse_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_lease_lapse_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_count_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_count_r_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_count_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_dlq_count_p_DLQ -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_beyond_lease_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_beyond_lease_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_nack_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_nack_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_over_max_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_over_max_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_negative_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_requeue_negative_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_broker_call_fails_r -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-            $$MQADMIN updateTopic -n nameserver:9876 -t rmq_broker_call_fails_p -c DefaultCluster -r 1 -w 1 -a +message.type=NORMAL &&
-
-            echo 'done'
+            echo 'Broker is up.' &&
+            bash /create-topics.sh
         "
     depends_on: # Ensure broker is healthy before attempting topic creation
       broker:
