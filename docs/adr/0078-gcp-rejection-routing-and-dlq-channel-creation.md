@@ -21,6 +21,8 @@ Date: 2026-09-24
 
 Accepted
 
+Amended 2026-10-31: R-21's members-set evidence injects `Unimplemented` on `GetIamPolicy` through the test-only interceptor rather than relying on the emulator lacking IAM, so it also holds on an emulator that implements IAM (see "IAM tolerance").
+
 ## Context
 
 **Parent Requirement**: [specs/0037-delivery-count-and-rejection-routing/requirements.md](../../specs/0037-delivery-count-and-rejection-routing/requirements.md)
@@ -266,6 +268,12 @@ For the construction case, `{Rpc}` reads `construct ProjectsClient` and `{Status
 
 - Members unset: `GetProjectAsync` reaches real GCP with the harness's `"mock"` access token (`Helper/GatewayFactory.cs:13-22`) and is refused with `Unauthenticated`, as spec 0036 measured. This case therefore needs outbound network: offline, `GetProjectAsync` fails with `Unavailable`, which is not tolerated, and the members-set mitigation below cannot apply because AC-20's first Given requires members unset. Where ADC does not resolve and `Credential` is null, construction throws `InvalidOperationException`. Both are tolerated.
 - Members set (C-11): `GetIamPolicyAsync` on the emulator returns `Unimplemented`, which is tolerated.
+  - **Evidence (2026-10-31).** Google's emulator returns `Unimplemented`, but floci-gcp 0.12.0 implements IAM and answers `GetIamPolicy` successfully, so no Warning is logged and the tolerance is never exercised. The members-set tests in `When_creating_a_dlq_backed_gcp_channel_on_the_emulator_should_tolerate_iam_failures{,_async}.cs` therefore inject it:
+    - `GcpFaultInjectingInterceptor` gains a `FaultStatus` (default `FailedPrecondition`, so the settle-failure tests are unchanged), set to `Unimplemented`.
+    - It is armed on `/google.iam.v1.IAMPolicy/GetIamPolicy` and wired through `TopicManagerConfiguration`, because the helpers call `publisher.IAMPolicyClient` and that builder builds the publisher client. The wiring is the same as for the settle failures above (`Credential = null`, `EmulatorDetection` left at `None`, `CallInvoker` through the interceptor).
+    - The tests assert the fault fired exactly twice, once per helper, which also guards against the invoker being dropped.
+    - They pass on both emulators. Removing `Unimplemented` from `GcpIamCallTolerance.IsTolerated` makes them fail on floci-gcp, so they still guard R-20.
+    - The two `GcpPullBudgetExhaustedDlq` tests only check the Warning count in passing (step 5.3), so they now accept 0 or 2 Warnings.
 
 That unblocks A-6/AC-43 and 0077's AC-39. All GCP verification runs locally against `docker-compose-gcp.yaml`.
 
