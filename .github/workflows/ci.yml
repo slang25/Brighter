@@ -837,6 +837,19 @@ jobs:
     timeout-minutes: 30
     needs: [build]
 
+    # floci-gcp serves Pub/Sub on 4588; the tests address it at localhost:8085, so map 8085 to it.
+    services:
+      floci-gcp:
+        image: floci/floci-gcp:0.12.0
+        ports:
+          - 8085:4588
+        options: >-
+          --health-cmd "/usr/local/bin/healthcheck.sh"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 5s
+
     steps:
       - uses: actions/checkout@v7
 
@@ -845,18 +858,6 @@ jobs:
         with:
           dotnet-version: |
             10.0.x
-
-      - name: Start the Pub/Sub emulator
-        run: |
-          docker run -d --name gcp-pubsub-emulator -p 8085:8085 \
-            gcr.io/google.com/cloudsdktool/cloud-sdk:emulators \
-            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=brighter-test
-          for i in $(seq 1 60); do
-            docker logs gcp-pubsub-emulator 2>&1 | grep -q "Server started" && exit 0
-            sleep 2
-          done
-          docker logs gcp-pubsub-emulator
-          exit 1
 
       - name: Install dependencies
         run: dotnet restore
