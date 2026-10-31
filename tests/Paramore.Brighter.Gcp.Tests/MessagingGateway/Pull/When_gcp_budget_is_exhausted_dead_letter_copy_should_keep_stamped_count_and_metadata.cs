@@ -150,12 +150,14 @@ public class GcpPullBudgetExhaustedDlqTests
             {
                 readingChannel = readerChannelFactory.CreateSyncChannel(readingSubscription);
 
-                // 5.3: channel creation for a DeadLetterPolicy-carrying subscription logs exactly
-                // two tolerated IAM Warnings (one per helper) on the emulator.
+                // 5.3: channel creation for a DeadLetterPolicy-carrying subscription logs one tolerated
+                // IAM Warning per helper where the emulator rejects IAM (two on Google's emulator), and
+                // none where it implements IAM (e.g. floci-gcp). The members-set IAM tolerance tests pin
+                // the Warnings down; here it is enough that there are none, or one per helper.
                 var warnings = TestCorrelator.GetLogEventsFromCurrentContext()
                     .Where(e => e.Level == LogEventLevel.Warning)
                     .ToList();
-                Assert.Equal(2, warnings.Count);
+                Assert.True(warnings.Count is 0 or 2, $"Expected 0 or 2 IAM Warnings, got {warnings.Count}");
             }
 
             var cmd = new ConformanceDeferredCommand { Value = "pull budget exhaustion dlq metadata test" };

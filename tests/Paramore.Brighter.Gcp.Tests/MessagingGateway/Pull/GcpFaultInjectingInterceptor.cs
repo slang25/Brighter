@@ -33,15 +33,23 @@ namespace Paramore.Brighter.Gcp.Tests.MessagingGateway.Pull;
 /// Test-only gRPC fault-injecting interceptor (ADR 0078 "Evidence for the two failures a broker
 /// cannot produce on demand"). Every call reaches the real emulator; when armed, only the result
 /// of the named fully-qualified gRPC method(s) is replaced with an <see cref="RpcException"/>
-/// carrying <see cref="StatusCode.FailedPrecondition"/> — never <see cref="StatusCode.Unavailable"/>,
-/// which is the one retriable code for both Acknowledge and ModifyAckDeadline and would just be
-/// retried rather than fail. Every other call, and every call while disarmed, passes through
-/// untouched. This is not a mock (ADR 0078, "Why this is not a mock (C-10)").
+/// carrying <see cref="FaultStatus"/> — by default <see cref="StatusCode.FailedPrecondition"/>, and
+/// never <see cref="StatusCode.Unavailable"/>, which is the one retriable code for both Acknowledge
+/// and ModifyAckDeadline and would just be retried rather than fail. Every other call, and every
+/// call while disarmed, passes through untouched. This is not a mock (ADR 0078, "Why this is not a
+/// mock (C-10)").
 /// </summary>
 internal sealed class GcpFaultInjectingInterceptor(params string[] faultyMethods) : Interceptor
 {
     private int _armed;
     private int _firedCount;
+
+    /// <summary>
+    /// The status the injected <see cref="RpcException"/> carries. The IAM tolerance tests set
+    /// <see cref="StatusCode.Unimplemented"/>, which is what Google's emulator answers to
+    /// <c>GetIamPolicy</c>, so they do not depend on the emulator lacking IAM (ADR 0078, R-21).
+    /// </summary>
+    public StatusCode FaultStatus { get; init; } = StatusCode.FailedPrecondition;
 
     /// <summary>
     /// The number of times the fault has fired. Guards against the injected invoker being silently
@@ -83,7 +91,7 @@ internal sealed class GcpFaultInjectingInterceptor(params string[] faultyMethods
             if (methodFullName == faulty)
             {
                 Interlocked.Increment(ref _firedCount);
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, "test-injected fault"));
+                throw new RpcException(new Status(FaultStatus, "test-injected fault"));
             }
         }
     }
