@@ -111,6 +111,9 @@ namespace Paramore.Brighter.MQTT.Tests.MessagingGateway.Helpers.Server
                 .CreateServerOptionsBuilder()
                 .WithDefaultEndpoint()
                 .WithDefaultEndpointBoundIPAddress(serverIPAddress)
+                // MQTTnet also listens on IPv6 by default, and fails to start on a host without
+                // IPv6 (such as a Depot CI sandbox); the tests only ever connect over serverIPAddress.
+                .WithDefaultEndpointBoundIPV6Address(IPAddress.None)
                 .WithDefaultEndpointPort(serverPort)
                 .Build();
         }
