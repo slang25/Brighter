@@ -1,20 +1,24 @@
-version: '3.1'
-
+# Floci for the DynamoDB outbox/inbox/locking tests.
+#
+# The DynamoDB tests address DynamoDB at http://localhost:8000, so Floci's 4566 is published on 8000.
+# That also lets this run alongside docker-compose-aws.yaml, which publishes Floci on 4566.
 services:
-  dynamodb-local:
-    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
-    image: "amazon/dynamodb-local:latest"
-    container_name: dynamodb-local
+  floci-dynamodb:
+    image: floci/floci:2.2.0
     ports:
-      - "8000:8000"
-    volumes:
-      - "./docker/dynamodb:/home/dynamodblocal/data"
-    working_dir: /home/dynamodblocal
-  
+      - "8000:4566"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   dynamo-admin:
     image: aaronshaf/dynamodb-admin
     environment:
-      - DYNAMO_ENDPOINT=http://dynamodb-local:8000
+      - DYNAMO_ENDPOINT=http://floci-dynamodb:4566
     ports:
       - 8001:8001
-  
+    depends_on:
+      - floci-dynamodb

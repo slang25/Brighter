@@ -45,13 +45,11 @@ services:
       POSTGRES_PASSWORD: password
 
   dynamo:
-    image: dwmkerr/dynamodb
-    command: "-inMemory"
+    # Floci serves DynamoDB on 4566; the DynamoDB tests address it at localhost:8000.
+    image: floci/floci:2.2.0
     hostname: dynamo
-    volumes:
-      - dynamodb:/data
     ports:
-      - "8000:8000"
+      - "8000:4566"
   
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
@@ -130,7 +128,5 @@ volumes:
   sqlserver-data:
     driver: local
   postgres-data:
-    driver: local
-  dynamodb:
     driver: local
   
